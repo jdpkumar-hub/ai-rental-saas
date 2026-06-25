@@ -1,0 +1,62 @@
+:root {
+  /* ---- Color tokens ---- */
+  --color-bg: #FBF8F3;          /* warm parchment background */
+  --color-surface: #FFFFFF;
+  --color-ink: #221F1A;          /* near-black warm ink for text */
+  --color-ink-muted: #6B6358;
+  --color-border: #E4DDD0;
+  --color-clay: #B5562F;         /* primary accent — terracotta clay */
+  --color-clay-dark: #8F4322;
+  --color-moss: #4B6651;         /* secondary accent — for "active/good" states */
+  --color-danger: #A8392B;
+
+  /* ---- Type tokens ---- */
+  --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", Menlo, monospace;
+
+  /* ---- Layout tokens ---- */
+  --radius: 6px;
+  --shadow-card: 0 1px 2px rgba(34, 31, 26, 0.04), 0 4px 12px rgba(34, 31, 26, 0.05);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--color-clay);
+  color: white;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-clay);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

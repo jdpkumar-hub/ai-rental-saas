@@ -99,6 +99,9 @@ export default function AnalyticsClient({ session }: { session: SessionPayload }
           >
             Analytics
           </a>
+          <a href="/dashboard/insights" style={styles.navLink}>
+            Insights
+          </a>
           <button onClick={handleLogout} style={styles.logoutButton}>
             Sign out
           </button>

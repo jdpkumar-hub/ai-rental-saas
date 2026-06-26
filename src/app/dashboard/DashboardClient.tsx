@@ -53,6 +53,9 @@ export default function DashboardClient({
           <a href="/dashboard/analytics" style={styles.navLink}>
             Analytics
           </a>
+          <a href="/dashboard/insights" style={styles.navLink}>
+            Insights
+          </a>
           <button onClick={handleLogout} style={styles.logoutButton}>
             Sign out
           </button>

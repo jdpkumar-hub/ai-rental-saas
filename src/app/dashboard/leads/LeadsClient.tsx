@@ -68,7 +68,10 @@ export default function LeadsClient({ session }: { session: SessionPayload }) {
     }
   }
 
-  async function updateLead(id: string, updates: Record<string, unknown>) {
+  async function updateLead(
+    id: string,
+    updates: Record<string, unknown>
+  ): Promise<boolean> {
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...updates } : l)));
 
     try {
@@ -80,11 +83,14 @@ export default function LeadsClient({ session }: { session: SessionPayload }) {
       const data = await res.json();
       if (res.ok && data.lead) {
         setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...data.lead } : l)));
+        return true;
       } else {
         fetchData();
+        return false;
       }
     } catch {
       fetchData();
+      return false;
     }
   }
 
@@ -221,7 +227,7 @@ function LeadRow({
   agents: Agent[];
   expanded: boolean;
   onToggle: () => void;
-  onUpdate: (updates: Record<string, unknown>) => void;
+  onUpdate: (updates: Record<string, unknown>) => Promise<boolean>;
   onDelete: () => void;
 }) {
   return (
@@ -265,17 +271,16 @@ function LeadDetail({
 }: {
   lead: Lead;
   agents: Agent[];
-  onUpdate: (updates: Record<string, unknown>) => void;
+  onUpdate: (updates: Record<string, unknown>) => Promise<boolean>;
   onDelete: () => void;
 }) {
   const [notes, setNotes] = useState(lead.notes ?? "");
-  const [notesSaved, setNotesSaved] = useState(true);
 
   // Editable contact fields (the 5 things the AI captures during the
-  // call). These use the same "edit locally, save on blur" pattern as
-  // Notes — saving on every keystroke would be wasteful and would also
-  // recompute the lease score on every single character typed, which is
-  // both slow and pointless mid-edit.
+  // call). These use the same "edit locally, save on blur" pattern —
+  // saving on every keystroke would be wasteful and would also recompute
+  // the lease score on every single character typed, which is both slow
+  // and pointless mid-edit.
   const [name, setName] = useState(lead.name ?? "");
   const [phone, setPhone] = useState(lead.phone ?? "");
   const [budget, setBudget] = useState(lead.budget ?? "");
@@ -283,21 +288,38 @@ function LeadDetail({
   const [apartmentSize, setApartmentSize] = useState(lead.apartment_size ?? "");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  function handleNotesBlur() {
-    if (notes !== (lead.notes ?? "")) {
-      onUpdate({ notes });
-      setNotesSaved(true);
+  // Per-field save status, so each text field can show its own brief
+  // "Saved" (or "Couldn't save") confirmation independently, rather than
+  // one shared indicator that wouldn't make clear WHICH field it refers
+  // to when several fields are edited close together.
+  type SaveStatus = "idle" | "saving" | "saved" | "error";
+  const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({});
+
+  function flashSaved(field: string, status: SaveStatus) {
+    setSaveStatus((prev) => ({ ...prev, [field]: status }));
+    if (status === "saved") {
+      // Auto-clear the confirmation after a couple seconds so it doesn't
+      // linger indefinitely and start to look like a permanent label.
+      setTimeout(() => {
+        setSaveStatus((prev) => (prev[field] === "saved" ? { ...prev, [field]: "idle" } : prev));
+      }, 2200);
     }
   }
 
-  function makeBlurHandler(
-    currentValue: string,
-    originalValue: string | null,
-    field: string
-  ) {
-    return () => {
+  async function handleNotesBlur() {
+    if (notes !== (lead.notes ?? "")) {
+      flashSaved("notes", "saving");
+      const success = await onUpdate({ notes });
+      flashSaved("notes", success ? "saved" : "error");
+    }
+  }
+
+  function makeBlurHandler(currentValue: string, originalValue: string | null, field: string) {
+    return async () => {
       if (currentValue !== (originalValue ?? "")) {
-        onUpdate({ [field]: currentValue || null });
+        flashSaved(field, "saving");
+        const success = await onUpdate({ [field]: currentValue || null });
+        flashSaved(field, success ? "saved" : "error");
       }
     };
   }
@@ -364,19 +386,17 @@ function LeadDetail({
       </div>
 
       <div style={styles.detailField}>
-        <label style={styles.detailLabel}>Notes</label>
+        <label style={styles.detailLabel}>
+          Notes <SaveIndicator status={saveStatus.notes} />
+        </label>
         <textarea
           value={notes}
-          onChange={(e) => {
-            setNotes(e.target.value);
-            setNotesSaved(false);
-          }}
+          onChange={(e) => setNotes(e.target.value)}
           onBlur={handleNotesBlur}
           placeholder="Add notes about this lead…"
           style={styles.textarea}
           rows={3}
         />
-        {!notesSaved && <span style={styles.unsavedHint}>Click away to save…</span>}
       </div>
 
       <div style={styles.detailField}>
@@ -389,34 +409,35 @@ function LeadDetail({
             value={name}
             onChange={setName}
             onBlur={makeBlurHandler(name, lead.name, "name")}
+            status={saveStatus.name}
           />
           <EditableField
             label="Phone"
             value={phone}
             onChange={setPhone}
             onBlur={makeBlurHandler(phone, lead.phone, "phone")}
+            status={saveStatus.phone}
           />
           <EditableField
             label="Budget"
             value={budget}
             onChange={setBudget}
             onBlur={makeBlurHandler(budget, lead.budget, "budget")}
+            status={saveStatus.budget}
           />
           <EditableField
             label="Move-in"
             value={moveInDate}
             onChange={setMoveInDate}
             onBlur={makeBlurHandler(moveInDate, lead.move_in_date, "move_in_date")}
+            status={saveStatus.move_in_date}
           />
           <EditableField
             label="Apartment size"
             value={apartmentSize}
             onChange={setApartmentSize}
-            onBlur={makeBlurHandler(
-              apartmentSize,
-              lead.apartment_size,
-              "apartment_size"
-            )}
+            onBlur={makeBlurHandler(apartmentSize, lead.apartment_size, "apartment_size")}
+            status={saveStatus.apartment_size}
           />
         </div>
       </div>
@@ -467,20 +488,26 @@ function LeadDetail({
   );
 }
 
+type SaveStatusValue = "idle" | "saving" | "saved" | "error" | undefined;
+
 function EditableField({
   label,
   value,
   onChange,
   onBlur,
+  status,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   onBlur: () => void;
+  status?: SaveStatusValue;
 }) {
   return (
     <div>
-      <div style={styles.capturedLabel}>{label}</div>
+      <div style={styles.capturedLabel}>
+        {label} <SaveIndicator status={status} />
+      </div>
       <input
         type="text"
         value={value}
@@ -492,6 +519,28 @@ function EditableField({
       />
     </div>
   );
+}
+
+// ----------------------------------------------------------------------------
+// SaveIndicator
+//
+// Small inline confirmation shown next to a field label right after it
+// auto-saves on blur. "saved" fades out automatically a couple seconds
+// after appearing (see flashSaved in LeadDetail); "error" stays visible
+// until the next successful save, since a failed save is something the
+// person should actually notice and possibly retry, not something that
+// should silently disappear.
+// ----------------------------------------------------------------------------
+function SaveIndicator({ status }: { status?: SaveStatusValue }) {
+  if (!status || status === "idle") return null;
+
+  if (status === "saving") {
+    return <span style={styles.savingIndicator}>saving…</span>;
+  }
+  if (status === "saved") {
+    return <span style={styles.savedIndicator}>✓ saved</span>;
+  }
+  return <span style={styles.errorIndicator}>⚠ couldn't save — try again</span>;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -725,7 +774,25 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "var(--font-body)",
     resize: "vertical",
   },
-  unsavedHint: { fontSize: 11.5, color: "var(--color-ink-muted)", fontStyle: "italic" },
+  savingIndicator: {
+    fontSize: 10.5,
+    color: "var(--color-ink-muted)",
+    fontWeight: 400,
+    textTransform: "none",
+    fontStyle: "italic",
+  },
+  savedIndicator: {
+    fontSize: 10.5,
+    color: "var(--color-moss)",
+    fontWeight: 600,
+    textTransform: "none",
+  },
+  errorIndicator: {
+    fontSize: 10.5,
+    color: "var(--color-danger)",
+    fontWeight: 600,
+    textTransform: "none",
+  },
   capturedGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",

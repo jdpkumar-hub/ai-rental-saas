@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   // 1. Load the call record (gives us company_id, conversation so far)
   const { data: call, error: callError } = await supabaseAdmin
     .from("calls")
-    .select("id, company_id, conversation, status")
+    .select("id, company_id, conversation, status, duration_seconds")
     .eq("call_sid", callSid)
     .single();
 
@@ -100,10 +100,19 @@ export async function POST(request: NextRequest) {
       process.env.TWILIO_AUTH_TOKEN!
     );
 
-    // 3. Append to conversation history
+    const recordingDuration = formData.get("RecordingDuration")?.toString();
+
+    // 3. Append to conversation history. We attach the recording URL to
+    // this specific user turn (not just the call as a whole) so the
+    // Phase 3 dashboard can let you play back each individual answer,
+    // not just one recording for the entire call.
     const conversation: ChatMessage[] = [
       ...(call.conversation as ChatMessage[]),
-      { role: "user", content: transcript },
+      {
+        role: "user",
+        content: transcript,
+        recording_url: recordingUrl,
+      } as ChatMessage,
     ];
 
     // 4. Run the GPT turn: extract fields + decide next message
@@ -151,12 +160,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update the call record with the new conversation state
+    // Update the call record with the new conversation state.
+    // recording_url stores the MOST RECENT turn's recording as a quick
+    // "play the last thing they said" shortcut; the full per-turn
+    // recordings live inside `conversation` (see above) for the
+    // Phase 3 dashboard's per-turn playback.
+    const previousDuration = call.duration_seconds ?? 0;
+    const thisTurnDuration = recordingDuration ? parseInt(recordingDuration, 10) : 0;
+
     await supabaseAdmin
       .from("calls")
       .update({
         conversation: updatedConversation,
         lead_id: leadId ?? null,
+        recording_url: recordingUrl,
+        duration_seconds: previousDuration + thisTurnDuration,
       })
       .eq("id", call.id);
 

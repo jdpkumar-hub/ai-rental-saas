@@ -77,7 +77,13 @@ export async function transcribeAudio(
 // structured JSON back (see leadExtraction.ts for the exact shape and the
 // reasoning behind it).
 // ----------------------------------------------------------------------------
-export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+export type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+  // Only present on "user" turns that came from an actual phone recording.
+  // Lets the Phase 3 dashboard play back each individual answer.
+  recording_url?: string;
+};
 
 export type ConversationTurnResult = {
   extracted: {

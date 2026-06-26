@@ -40,9 +40,17 @@ export default function DashboardClient({
             </div>
           </div>
         </div>
-        <button onClick={handleLogout} style={styles.logoutButton}>
-          Sign out
-        </button>
+        <div style={styles.headerNav}>
+          <a href="/dashboard" style={{ ...styles.navLink, ...styles.navLinkActive }}>
+            Dashboard
+          </a>
+          <a href="/dashboard/calls" style={styles.navLink}>
+            Calls
+          </a>
+          <button onClick={handleLogout} style={styles.logoutButton}>
+            Sign out
+          </button>
+        </div>
       </header>
 
       <main style={styles.main}>
@@ -139,6 +147,23 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 12,
+  },
+  headerNav: {
+    display: "flex",
+    alignItems: "center",
+    gap: 20,
+  },
+  navLink: {
+    fontSize: 13.5,
+    color: "var(--color-ink-muted)",
+    textDecoration: "none",
+    paddingBottom: 4,
+    borderBottom: "2px solid transparent",
+  },
+  navLinkActive: {
+    color: "var(--color-ink)",
+    fontWeight: 600,
+    borderBottom: "2px solid var(--color-clay)",
   },
   mark: {
     width: 32,

@@ -88,6 +88,22 @@ export default function LeadsClient({ session }: { session: SessionPayload }) {
     }
   }
 
+  async function deleteLead(id: string) {
+    // Remove from local state immediately for a snappy feel; revert via
+    // refetch if the server call actually fails.
+    setLeads((prev) => prev.filter((l) => l.id !== id));
+    setExpandedId(null);
+
+    try {
+      const res = await fetch(`/api/leads/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        fetchData();
+      }
+    } catch {
+      fetchData();
+    }
+  }
+
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
@@ -181,6 +197,7 @@ export default function LeadsClient({ session }: { session: SessionPayload }) {
                     expanded={expandedId === lead.id}
                     onToggle={() => setExpandedId(expandedId === lead.id ? null : lead.id)}
                     onUpdate={(updates) => updateLead(lead.id, updates)}
+                    onDelete={() => deleteLead(lead.id)}
                   />
                 ))}
               </tbody>
@@ -198,12 +215,14 @@ function LeadRow({
   expanded,
   onToggle,
   onUpdate,
+  onDelete,
 }: {
   lead: Lead;
   agents: Agent[];
   expanded: boolean;
   onToggle: () => void;
   onUpdate: (updates: Record<string, unknown>) => void;
+  onDelete: () => void;
 }) {
   return (
     <>
@@ -230,7 +249,7 @@ function LeadRow({
       {expanded && (
         <tr>
           <td colSpan={7} style={styles.expandedCell}>
-            <LeadDetail lead={lead} agents={agents} onUpdate={onUpdate} />
+            <LeadDetail lead={lead} agents={agents} onUpdate={onUpdate} onDelete={onDelete} />
           </td>
         </tr>
       )}
@@ -242,19 +261,45 @@ function LeadDetail({
   lead,
   agents,
   onUpdate,
+  onDelete,
 }: {
   lead: Lead;
   agents: Agent[];
   onUpdate: (updates: Record<string, unknown>) => void;
+  onDelete: () => void;
 }) {
   const [notes, setNotes] = useState(lead.notes ?? "");
   const [notesSaved, setNotesSaved] = useState(true);
+
+  // Editable contact fields (the 5 things the AI captures during the
+  // call). These use the same "edit locally, save on blur" pattern as
+  // Notes — saving on every keystroke would be wasteful and would also
+  // recompute the lease score on every single character typed, which is
+  // both slow and pointless mid-edit.
+  const [name, setName] = useState(lead.name ?? "");
+  const [phone, setPhone] = useState(lead.phone ?? "");
+  const [budget, setBudget] = useState(lead.budget ?? "");
+  const [moveInDate, setMoveInDate] = useState(lead.move_in_date ?? "");
+  const [apartmentSize, setApartmentSize] = useState(lead.apartment_size ?? "");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   function handleNotesBlur() {
     if (notes !== (lead.notes ?? "")) {
       onUpdate({ notes });
       setNotesSaved(true);
     }
+  }
+
+  function makeBlurHandler(
+    currentValue: string,
+    originalValue: string | null,
+    field: string
+  ) {
+    return () => {
+      if (currentValue !== (originalValue ?? "")) {
+        onUpdate({ [field]: currentValue || null });
+      }
+    };
   }
 
   return (
@@ -335,11 +380,44 @@ function LeadDetail({
       </div>
 
       <div style={styles.detailField}>
-        <label style={styles.detailLabel}>Lead details captured from call</label>
+        <label style={styles.detailLabel}>
+          Lead details captured from call — editable to correct transcription errors
+        </label>
         <div style={styles.capturedGrid}>
-          <CapturedField label="Budget" value={lead.budget} />
-          <CapturedField label="Move-in" value={lead.move_in_date} />
-          <CapturedField label="Apartment size" value={lead.apartment_size} />
+          <EditableField
+            label="Name"
+            value={name}
+            onChange={setName}
+            onBlur={makeBlurHandler(name, lead.name, "name")}
+          />
+          <EditableField
+            label="Phone"
+            value={phone}
+            onChange={setPhone}
+            onBlur={makeBlurHandler(phone, lead.phone, "phone")}
+          />
+          <EditableField
+            label="Budget"
+            value={budget}
+            onChange={setBudget}
+            onBlur={makeBlurHandler(budget, lead.budget, "budget")}
+          />
+          <EditableField
+            label="Move-in"
+            value={moveInDate}
+            onChange={setMoveInDate}
+            onBlur={makeBlurHandler(moveInDate, lead.move_in_date, "move_in_date")}
+          />
+          <EditableField
+            label="Apartment size"
+            value={apartmentSize}
+            onChange={setApartmentSize}
+            onBlur={makeBlurHandler(
+              apartmentSize,
+              lead.apartment_size,
+              "apartment_size"
+            )}
+          />
         </div>
       </div>
 
@@ -355,15 +433,63 @@ function LeadDetail({
           </ul>
         </div>
       )}
+
+      <div style={styles.deleteRow}>
+        {!confirmingDelete ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmingDelete(true);
+            }}
+            style={styles.deleteButton}
+          >
+            Delete lead
+          </button>
+        ) : (
+          <div style={styles.deleteConfirmRow} onClick={(e) => e.stopPropagation()}>
+            <span style={styles.deleteConfirmText}>
+              Permanently delete this lead? The linked call recording and transcript
+              will NOT be deleted.
+            </span>
+            <button onClick={onDelete} style={styles.deleteConfirmButton}>
+              Yes, delete
+            </button>
+            <button
+              onClick={() => setConfirmingDelete(false)}
+              style={styles.deleteCancelButton}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function CapturedField({ label, value }: { label: string; value: string | null }) {
+function EditableField({
+  label,
+  value,
+  onChange,
+  onBlur,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+}) {
   return (
     <div>
       <div style={styles.capturedLabel}>{label}</div>
-      <div style={styles.capturedValue}>{value || <Muted>—</Muted>}</div>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
+        onClick={(e) => e.stopPropagation()}
+        style={styles.capturedInput}
+        placeholder="—"
+      />
     </div>
   );
 }
@@ -617,11 +743,69 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 4,
   },
   capturedValue: { fontSize: 13.5, color: "var(--color-ink)" },
+  capturedInput: {
+    width: "100%",
+    border: "1px solid var(--color-border)",
+    borderRadius: 4,
+    padding: "6px 8px",
+    fontSize: 13.5,
+    background: "var(--color-surface)",
+    color: "var(--color-ink)",
+    fontFamily: "var(--font-body)",
+  },
   reasonsList: {
     margin: 0,
     paddingLeft: 18,
     fontSize: 13,
     color: "var(--color-ink-muted)",
     lineHeight: 1.7,
+  },
+  deleteRow: {
+    paddingTop: 14,
+    borderTop: "1px solid var(--color-border)",
+  },
+  deleteButton: {
+    background: "transparent",
+    border: "1px solid var(--color-danger)",
+    color: "var(--color-danger)",
+    borderRadius: "var(--radius)",
+    padding: "8px 14px",
+    fontSize: 13,
+    cursor: "pointer",
+  },
+  deleteConfirmRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    flexWrap: "wrap",
+    background: "#FBEAE6",
+    border: "1px solid #EFC9C0",
+    borderRadius: "var(--radius)",
+    padding: "10px 14px",
+  },
+  deleteConfirmText: {
+    fontSize: 12.5,
+    color: "var(--color-danger)",
+    flex: "1 1 280px",
+  },
+  deleteConfirmButton: {
+    background: "var(--color-danger)",
+    color: "white",
+    border: "none",
+    borderRadius: 4,
+    padding: "7px 12px",
+    fontSize: 12.5,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  deleteCancelButton: {
+    background: "transparent",
+    border: "1px solid var(--color-border)",
+    color: "var(--color-ink)",
+    borderRadius: 4,
+    padding: "7px 12px",
+    fontSize: 12.5,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
   },
 };

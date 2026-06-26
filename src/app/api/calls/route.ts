@@ -14,6 +14,7 @@ type CallRow = {
   status: string;
   conversation: unknown;
   recording_url: string | null;
+  full_call_recording_url: string | null;
   duration_seconds: number | null;
   summary: string | null;
   sentiment: string | null;
@@ -54,7 +55,7 @@ export async function GET() {
   const { data: calls, error } = await tenantDb
     .from("calls")
     .select(
-      "id, call_sid, from_number, to_number, status, conversation, recording_url, duration_seconds, summary, sentiment, lead_id, started_at, ended_at, created_at"
+      "id, call_sid, from_number, to_number, status, conversation, recording_url, full_call_recording_url, duration_seconds, summary, sentiment, lead_id, started_at, ended_at, created_at"
     )
     .order("created_at", { ascending: false });
 

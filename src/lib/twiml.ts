@@ -112,21 +112,47 @@ export function buildErrorTwiml(voice: string = "alloy"): string {
 // ----------------------------------------------------------------------------
 // buildGreetingTwiml
 //
-// The very first response on an incoming call: speak the company's
-// greeting, then start the record loop pointed at /turn.
+// The very first response on an incoming call: starts a whole-call
+// recording running in the background (separate from the per-turn
+// recordings each <Record> verb captures), then speaks the company's
+// greeting and starts the record loop pointed at /turn.
+//
+// recordingStatusCallbackUrl: Twilio POSTs to this URL once the full-call
+// recording is finished processing and ready to download. We can't get the
+// URL synchronously here because the recording doesn't exist until the
+// call ends — Twilio tells us asynchronously via this callback instead.
 // ----------------------------------------------------------------------------
 export function buildGreetingTwiml({
   greeting,
   voice,
   turnActionUrl,
+  recordingStatusCallbackUrl,
 }: {
   greeting: string;
   voice: string;
   turnActionUrl: string;
+  recordingStatusCallbackUrl?: string;
 }): string {
-  return buildSpeakAndRecordTwiml({
-    message: greeting,
-    voice,
-    actionUrl: turnActionUrl,
-  });
+  const pollyVoice = resolveVoice(voice);
+  const recordingStart = recordingStatusCallbackUrl
+    ? `<Start><Recording recordingStatusCallback="${escapeXml(
+        recordingStatusCallbackUrl
+      )}" recordingStatusCallbackEvent="completed" /></Start>`
+    : "";
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  ${recordingStart}
+  <Say voice="${pollyVoice}">${escapeXml(greeting)}</Say>
+  <Record
+    action="${escapeXml(turnActionUrl)}"
+    method="POST"
+    maxLength="30"
+    timeout="3"
+    playBeep="false"
+    trim="trim-silence"
+  />
+  <Say voice="${pollyVoice}">Sorry, I didn't catch that.</Say>
+  <Hangup/>
+</Response>`;
 }

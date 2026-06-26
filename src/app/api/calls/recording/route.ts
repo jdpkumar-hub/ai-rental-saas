@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
 
   const { data: call, error: callError } = await tenantDb
     .from("calls")
-    .select("id, recording_url, conversation")
+    .select("id, recording_url, full_call_recording_url, conversation")
     .eq("id", callId)
     .single();
 
@@ -60,9 +60,11 @@ export async function GET(request: NextRequest) {
 
   const conversation = (call.conversation as Array<{ recording_url?: string }>) ?? [];
   const knownUrls = new Set(
-    [call.recording_url, ...conversation.map((turn) => turn.recording_url)].filter(
-      Boolean
-    )
+    [
+      call.recording_url,
+      call.full_call_recording_url,
+      ...conversation.map((turn) => turn.recording_url),
+    ].filter(Boolean)
   );
 
   if (!knownUrls.has(recordingUrl)) {

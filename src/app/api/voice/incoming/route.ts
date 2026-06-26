@@ -120,15 +120,20 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 4. Respond with TwiML: speak the greeting, then record the caller's
-  // first response and POST it to /api/voice/turn.
+  // 4. Respond with TwiML: start the whole-call recording, speak the
+  // greeting, then record the caller's first response and POST it to
+  // /api/voice/turn.
   const baseUrl = new URL(request.url).origin;
   const turnActionUrl = `${baseUrl}/api/voice/turn?callSid=${encodeURIComponent(callSid)}`;
+  const recordingStatusCallbackUrl = `${baseUrl}/api/voice/recording-complete?callSid=${encodeURIComponent(
+    callSid
+  )}`;
 
   const twiml = buildGreetingTwiml({
     greeting: settings.greeting,
     voice: settings.voice,
     turnActionUrl,
+    recordingStatusCallbackUrl,
   });
 
   return new NextResponse(twiml, {

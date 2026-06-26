@@ -18,6 +18,7 @@ type Call = {
   status: string;
   conversation: ConversationTurn[];
   recording_url: string | null;
+  full_call_recording_url: string | null;
   duration_seconds: number | null;
   summary: string | null;
   sentiment: string | null;
@@ -188,6 +189,12 @@ function CallDetail({ call }: { call: Call }) {
 
   return (
     <div style={styles.detailWrap}>
+      {call.full_call_recording_url && (
+        <div style={{ ...styles.detailSection, marginBottom: 20 }}>
+          <div style={styles.detailLabel}>Full Call</div>
+          <AudioPlayer callId={call.id} recordingUrl={call.full_call_recording_url} />
+        </div>
+      )}
       <div style={styles.detailSection}>
         <div style={styles.detailLabel}>Transcript</div>
         <div style={styles.transcriptBox}>

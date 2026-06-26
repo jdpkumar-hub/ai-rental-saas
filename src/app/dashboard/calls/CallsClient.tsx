@@ -84,6 +84,9 @@ export default function CallsClient({ session }: { session: SessionPayload }) {
           <a href="/dashboard/calls" style={{ ...styles.navLink, ...styles.navLinkActive }}>
             Calls
           </a>
+          <a href="/dashboard/leads" style={styles.navLink}>
+            Leads
+          </a>
           <a href="/dashboard/analytics" style={styles.navLink}>
             Analytics
           </a>

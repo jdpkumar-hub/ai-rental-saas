@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { transcribeAudio, runConversationTurn, ChatMessage } from "@/lib/openai";
 import { buildSpeakAndRecordTwiml, buildClosingTwiml, buildErrorTwiml } from "@/lib/twiml";
 import { LeadFields, isLeadComplete } from "@/lib/leadExtraction";
+import { recomputeAndSaveLeaseProbability } from "@/lib/leaseScore";
 
 // ----------------------------------------------------------------------------
 // POST /api/voice/turn
@@ -158,6 +159,14 @@ export async function POST(request: NextRequest) {
           .single();
         leadId = newLead?.id;
       }
+    }
+
+    // Recompute the lease probability score now that this lead's fields
+    // may have changed. We do this on every turn (not just at the end of
+    // the call) so the score is always current even if a caller hangs up
+    // mid-conversation — see src/lib/leaseScore.ts for the scoring logic.
+    if (leadId) {
+      await recomputeAndSaveLeaseProbability(supabaseAdmin, leadId);
     }
 
     // Update the call record with the new conversation state.

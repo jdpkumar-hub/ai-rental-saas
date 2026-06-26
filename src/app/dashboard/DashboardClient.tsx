@@ -47,6 +47,9 @@ export default function DashboardClient({
           <a href="/dashboard/calls" style={styles.navLink}>
             Calls
           </a>
+          <a href="/dashboard/leads" style={styles.navLink}>
+            Leads
+          </a>
           <a href="/dashboard/analytics" style={styles.navLink}>
             Analytics
           </a>

@@ -56,6 +56,11 @@ export default function DashboardClient({
           <a href="/dashboard/insights" style={styles.navLink}>
             Insights
           </a>
+          {(session.role === "admin" || session.role === "manager") && (
+            <a href="/dashboard/users" style={styles.navLink}>
+              Users
+            </a>
+          )}
           <button onClick={handleLogout} style={styles.logoutButton}>
             Sign out
           </button>

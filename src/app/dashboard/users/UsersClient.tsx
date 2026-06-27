@@ -81,6 +81,9 @@ export default function UsersClient({ session }: { session: SessionPayload }) {
           <a href="/dashboard/users" style={{ ...styles.navLink, ...styles.navLinkActive }}>
             Users
           </a>
+          <a href="/dashboard/settings" style={styles.navLink}>
+            Settings
+          </a>
           <button onClick={handleLogout} style={styles.logoutButton}>
             Sign out
           </button>

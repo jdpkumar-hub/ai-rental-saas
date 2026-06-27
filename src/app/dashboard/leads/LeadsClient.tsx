@@ -152,6 +152,11 @@ export default function LeadsClient({ session }: { session: SessionPayload }) {
               Users
             </a>
           )}
+          {(session.role === "admin" || session.role === "manager") && (
+            <a href="/dashboard/settings" style={styles.navLink}>
+              Settings
+            </a>
+          )}
           <button onClick={handleLogout} style={styles.logoutButton}>
             Sign out
           </button>

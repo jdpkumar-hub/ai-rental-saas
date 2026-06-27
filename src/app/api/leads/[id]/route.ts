@@ -107,6 +107,18 @@ export async function PATCH(
     }
   }
 
+  // Keep the linked call's caller_name/caller_phone snapshot in sync when
+  // an agent corrects a misheard name or phone number here in the CRM —
+  // otherwise Call History would keep showing the original (possibly
+  // wrong) transcription forever, even after someone fixes it on the lead.
+  if (("name" in updates || "phone" in updates) && updated.call_id) {
+    const callSnapshotUpdate: Record<string, unknown> = {};
+    if ("name" in updates) callSnapshotUpdate.caller_name = updated.name;
+    if ("phone" in updates) callSnapshotUpdate.caller_phone = updated.phone;
+
+    await tenantDb.from("calls").update(callSnapshotUpdate).eq("id", updated.call_id);
+  }
+
   return NextResponse.json({ lead: updated });
 }
 

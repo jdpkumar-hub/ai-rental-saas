@@ -19,30 +19,31 @@ type CallRow = {
   summary: string | null;
   sentiment: string | null;
   lead_id: string | null;
+  caller_name: string | null;
+  caller_phone: string | null;
   started_at: string;
   ended_at: string | null;
   created_at: string;
 };
 
-type LeadRow = {
-  id: string;
-  name: string | null;
-  phone: string | null;
-};
-
 // ----------------------------------------------------------------------------
 // GET /api/calls
 //
-// Lists all calls for the logged-in user's company, most recent first,
-// joined with whatever lead data was extracted from each call. This is the
-// data source for the Phase 3 Call History table.
+// Lists all calls for the logged-in user's company, most recent first.
 //
-// Per the Phase 3 spec, each row needs: Customer (from lead.name),
-// Phone, Recording, Transcript, Summary, Sentiment, Lead Score, Duration.
-// Summary/Sentiment/Lead Score are deferred to Phase 6 per your call —
-// the columns are queried as null placeholders here so the dashboard UI
-// can already render the right table shape and "—" for not-yet-available
-// fields, without needing a schema change later.
+// caller_name / caller_phone are read directly from `calls` (see
+// migration 0006) rather than joined through `leads`. They're written as
+// a snapshot the moment a lead first captures them (see voice/turn) and
+// kept in sync if an agent later corrects them in the CRM (see
+// leads/[id]/route.ts) — but they're NOT cleared if the lead itself is
+// deleted. A call is a historical fact; deleting a CRM record shouldn't
+// erase what the caller actually said during a real phone call.
+//
+// Per the Phase 3 spec, each row needs: Customer, Phone, Recording,
+// Transcript, Summary, Sentiment, Lead Score, Duration. Summary/Sentiment
+// /Lead Score are deferred to Phase 6 per your call — the columns are
+// queried as null placeholders here so the dashboard UI can already
+// render the right table shape without needing a schema change later.
 // ----------------------------------------------------------------------------
 export async function GET() {
   const session = await getSession();
@@ -55,7 +56,7 @@ export async function GET() {
   const { data: calls, error } = await tenantDb
     .from("calls")
     .select(
-      "id, call_sid, from_number, to_number, status, conversation, recording_url, full_call_recording_url, duration_seconds, summary, sentiment, lead_id, started_at, ended_at, created_at"
+      "id, call_sid, from_number, to_number, status, conversation, recording_url, full_call_recording_url, duration_seconds, summary, sentiment, lead_id, caller_name, caller_phone, started_at, ended_at, created_at"
     )
     .order("created_at", { ascending: false });
 
@@ -65,26 +66,14 @@ export async function GET() {
 
   const callRows = (calls ?? []) as CallRow[];
 
-  // Fetch lead names/phones for every call that has one, in a single query
-  // rather than one query per call (N+1), then stitch them together below.
-  const leadIds = callRows.map((c) => c.lead_id).filter(Boolean) as string[];
-
-  let leadsById: Record<string, { name: string | null; phone: string | null }> = {};
-
-  if (leadIds.length > 0) {
-    const { data: leads } = await tenantDb
-      .from("leads")
-      .select("id, name, phone")
-      .in("id", leadIds);
-
-    const leadRows = (leads ?? []) as LeadRow[];
-    leadsById = Object.fromEntries(leadRows.map((l) => [l.id, l]));
-  }
-
+  // Field names kept as lead_name/lead_phone in the API response for
+  // backward compatibility with the existing Call History UI, even
+  // though they now come from the call's own snapshot columns rather
+  // than an actual join to `leads`.
   const enriched = callRows.map((call) => ({
     ...call,
-    lead_name: call.lead_id ? leadsById[call.lead_id]?.name ?? null : null,
-    lead_phone: call.lead_id ? leadsById[call.lead_id]?.phone ?? null : null,
+    lead_name: call.caller_name,
+    lead_phone: call.caller_phone,
   }));
 
   return NextResponse.json({ calls: enriched });

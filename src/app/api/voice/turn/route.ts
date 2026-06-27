@@ -174,6 +174,13 @@ export async function POST(request: NextRequest) {
     // "play the last thing they said" shortcut; the full per-turn
     // recordings live inside `conversation` (see above) for the
     // Phase 3 dashboard's per-turn playback.
+    //
+    // caller_name / caller_phone are a SNAPSHOT, written every turn from
+    // whatever's currently known — independent of the linked lead. If
+    // that lead is later edited or deleted (a supported Phase 5 action),
+    // Call History keeps showing what the caller actually said on this
+    // call, since that's a historical fact about the call itself, not
+    // something that should disappear just because the CRM record did.
     const previousDuration = call.duration_seconds ?? 0;
     const thisTurnDuration = recordingDuration ? parseInt(recordingDuration, 10) : 0;
 
@@ -184,6 +191,8 @@ export async function POST(request: NextRequest) {
         lead_id: leadId ?? null,
         recording_url: recordingUrl,
         duration_seconds: previousDuration + thisTurnDuration,
+        caller_name: mergedFields.name,
+        caller_phone: mergedFields.phone,
       })
       .eq("id", call.id);
 

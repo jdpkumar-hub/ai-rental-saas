@@ -37,6 +37,15 @@ type AdminAccount = {
   created_at: string;
 };
 
+type CompanyUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  active: boolean;
+  created_at: string;
+};
+
 type Tab = "companies" | "inquiries" | "account";
 
 export default function PlatformAdminClient({
@@ -370,6 +379,23 @@ function CompanyDetail({
   const [status, setStatus] = useState(company.status);
   const [uploading, setUploading] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [users, setUsers] = useState<CompanyUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  async function fetchUsers() {
+    setUsersLoading(true);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${company.id}/users`);
+      const json = await res.json();
+      if (res.ok) setUsers(json.users ?? []);
+    } finally {
+      setUsersLoading(false);
+    }
+  }
 
   async function patchCompany(updates: Record<string, unknown>) {
     setSaveMsg(null);
@@ -494,7 +520,216 @@ function CompanyDetail({
           </p>
         </div>
       </div>
+
       {saveMsg && <div style={styles.saveMsg}>{saveMsg}</div>}
+
+      <div style={styles.usersSection}>
+        <div style={styles.detailLabel}>Logins at this company</div>
+        {usersLoading ? (
+          <div style={styles.loading}>Loading…</div>
+        ) : users.length === 0 ? (
+          <p style={styles.hint}>No users found — something may have gone wrong during creation.</p>
+        ) : (
+          <div style={styles.usersTable}>
+            {users.map((u) => (
+              <CompanyUserRow key={u.id} companyId={company.id} user={u} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <DangerZone company={company} />
+    </div>
+  );
+}
+
+function CompanyUserRow({
+  companyId,
+  user,
+}: {
+  companyId: string;
+  user: CompanyUser;
+}) {
+  const [resetting, setResetting] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function handleReset() {
+    if (newPassword.length < 8) {
+      setMsg("Password must be at least 8 characters.");
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/platform-admin/companies/${companyId}/users/${user.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: newPassword }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error || "Reset failed.");
+        return;
+      }
+      setMsg("✓ Password reset");
+      setNewPassword("");
+      setResetting(false);
+    } catch {
+      setMsg("Could not reach the server.");
+    }
+  }
+
+  return (
+    <div style={styles.userRow}>
+      <div style={styles.userRowMain}>
+        <span>
+          <strong>{user.name}</strong> · {capitalize(user.role)}
+        </span>
+        <span style={styles.mono}>{user.email}</span>
+        <button onClick={() => setResetting(!resetting)} style={styles.secondaryButton}>
+          {resetting ? "Cancel" : "Reset password"}
+        </button>
+      </div>
+      {resetting && (
+        <div style={styles.inlineRow}>
+          <input
+            type="text"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            placeholder="New password (8+ characters)"
+            style={styles.input}
+          />
+          <button onClick={handleReset} style={styles.primaryButton}>
+            Set password
+          </button>
+        </div>
+      )}
+      {msg && <div style={styles.saveMsg}>{msg}</div>}
+    </div>
+  );
+}
+
+function DangerZone({ company }: { company: Company }) {
+  const router = useRouter();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleCancel() {
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${company.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "cancelled" }),
+      });
+      if (res.ok) {
+        setMsg("✓ Company cancelled — their data is untouched, just login-blocked.");
+        router.refresh();
+      } else {
+        setMsg("Failed to cancel.");
+      }
+    } catch {
+      setMsg("Could not reach the server.");
+    }
+  }
+
+  async function handlePermanentDelete() {
+    if (confirmText !== company.company_code) {
+      setMsg(`Type "${company.company_code}" exactly to confirm.`);
+      return;
+    }
+    setDeleting(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${company.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: confirmText }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error || "Delete failed.");
+        setDeleting(false);
+        return;
+      }
+      router.refresh();
+      window.location.reload();
+    } catch {
+      setMsg("Could not reach the server.");
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div style={styles.dangerZone}>
+      <div style={styles.detailLabel}>Danger zone</div>
+      <div style={styles.dangerRow}>
+        <div>
+          <strong>Cancel this company</strong>
+          <p style={styles.hint}>
+            Blocks their login immediately. All leads, calls, and recordings stay
+            intact — fully reversible by switching status back to Active above.
+          </p>
+        </div>
+        <button onClick={handleCancel} style={styles.warnButton}>
+          Cancel company
+        </button>
+      </div>
+
+      <div style={styles.dangerRow}>
+        <div>
+          <strong>Permanently delete everything</strong>
+          <p style={styles.hint}>
+            Deletes the company, every user login, every lead, every call
+            recording and transcript. There is no undo.
+          </p>
+          {!confirmingDelete ? (
+            <button
+              onClick={() => setConfirmingDelete(true)}
+              style={styles.dangerButton}
+            >
+              Delete permanently
+            </button>
+          ) : (
+            <div style={styles.deleteConfirmBox}>
+              <p style={styles.hint}>
+                Type <code style={styles.code}>{company.company_code}</code> to
+                confirm:
+              </p>
+              <div style={styles.inlineRow}>
+                <input
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  style={styles.input}
+                  placeholder={company.company_code}
+                />
+                <button
+                  onClick={handlePermanentDelete}
+                  disabled={deleting}
+                  style={styles.dangerButton}
+                >
+                  {deleting ? "Deleting…" : "Confirm permanent delete"}
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmingDelete(false);
+                    setConfirmText("");
+                  }}
+                  style={styles.secondaryButton}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {msg && <div style={styles.saveMsg}>{msg}</div>}
     </div>
   );
 }
@@ -1043,5 +1278,66 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: "1px solid #E4DDD0",
     display: "flex",
     gap: 10,
+  },
+  usersSection: {
+    marginTop: 22,
+    paddingTop: 18,
+    borderTop: "1px solid #E4DDD0",
+  },
+  usersTable: { marginTop: 10, display: "flex", flexDirection: "column", gap: 10 },
+  userRow: {
+    background: "white",
+    border: "1px solid #E4DDD0",
+    borderRadius: 6,
+    padding: "10px 14px",
+  },
+  userRowMain: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    fontSize: 13.5,
+    flexWrap: "wrap",
+  },
+  dangerZone: {
+    marginTop: 22,
+    paddingTop: 18,
+    borderTop: "1px solid #E4DDD0",
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+  },
+  dangerRow: {
+    background: "white",
+    border: "1px solid #EFC9C0",
+    borderRadius: 6,
+    padding: "14px 16px",
+    fontSize: 13.5,
+  },
+  warnButton: {
+    background: "transparent",
+    border: "1px solid #9A6B1F",
+    color: "#9A6B1F",
+    borderRadius: 6,
+    padding: "8px 14px",
+    fontSize: 13,
+    cursor: "pointer",
+    marginTop: 8,
+  },
+  dangerButton: {
+    background: "#A8392B",
+    color: "white",
+    border: "none",
+    borderRadius: 6,
+    padding: "8px 14px",
+    fontSize: 13,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  deleteConfirmBox: { marginTop: 10 },
+  code: {
+    fontFamily: "monospace",
+    background: "#F2ECE1",
+    padding: "1px 6px",
+    borderRadius: 3,
   },
 };

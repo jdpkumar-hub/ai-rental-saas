@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getTenantClient } from "@/lib/supabaseAdmin";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 // ----------------------------------------------------------------------------
 // GET /api/company-branding
@@ -12,6 +12,20 @@ import { getTenantClient } from "@/lib/supabaseAdmin";
 // (logo_url, brand_color — tenant identity/branding). Different table,
 // different concern, kept as a different route rather than overloading
 // one endpoint with two tables' worth of fields.
+//
+// IMPORTANT: this route uses supabaseAdmin directly with an explicit
+// .eq("id", session.companyId) filter, NOT getTenantClient. The
+// getTenantClient wrapper (see supabaseAdmin.ts) assumes every table has
+// a `company_id` foreign key column and filters on that — true for
+// `leads`, `calls`, `users`, `company_settings`, but NOT true for
+// `companies` itself, whose own primary key IS the tenant identifier
+// (there's no separate company_id column on companies — that would be
+// circular). Using getTenantClient here caused a real bug: "column
+// companies.company_id does not exist". Filtering directly by `id` is
+// the correct approach for this one table, and still fully tenant-safe
+// since session.companyId was already cryptographically verified from
+// the signed session JWT before this code runs — never from raw,
+// unvalidated input.
 // ----------------------------------------------------------------------------
 
 const HEX_COLOR_PATTERN = /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/;
@@ -22,11 +36,10 @@ export async function GET() {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const tenantDb = await getTenantClient(session.companyId);
-
-  const { data, error } = await tenantDb
+  const { data, error } = await supabaseAdmin
     .from("companies")
     .select("company_name, logo_url, brand_color")
+    .eq("id", session.companyId)
     .single();
 
   if (error) {
@@ -90,11 +103,10 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "No valid fields to update." }, { status: 400 });
   }
 
-  const tenantDb = await getTenantClient(session.companyId);
-
-  const { data, error } = await tenantDb
+  const { data, error } = await supabaseAdmin
     .from("companies")
     .update(updates)
+    .eq("id", session.companyId)
     .select("company_name, logo_url, brand_color")
     .single();
 

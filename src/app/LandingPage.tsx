@@ -33,6 +33,7 @@ export default function LandingPage() {
               <a href="#agent">The Agent</a>
               <a href="#pricing">Pricing</a>
             </div>
+            <LoginDropdown />
             <a href="#book" className="btn btn-ghost" style={{ marginLeft: 8 }}>
               Book a walkthrough
             </a>
@@ -412,6 +413,64 @@ export default function LandingPage() {
 // choice, you review inquiries yourself in the platform-admin dashboard
 // and manually onboard whoever you decide to take on.
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// LoginDropdown
+//
+// Now that the root URL shows the marketing page instead of always
+// redirecting to /login, there was no way for anyone to actually find
+// either login screen from here. This adds a simple "Login ▾" trigger
+// in the header that reveals two real, distinct destinations:
+//   - User login  -> /login              (company admins/managers/agents)
+//   - Admin login -> /platform-admin/login (you, the platform admin)
+// Kept as two separate, clearly-labeled links rather than guessing which
+// one a visitor wants — the two login systems are intentionally
+// separate (see platformAdminSession.ts), so the UI should make that
+// separation obvious rather than merge them into one ambiguous button.
+// ----------------------------------------------------------------------------
+function LoginDropdown() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className="login-dropdown"
+      onBlur={(e) => {
+        // Close only when focus moves OUTSIDE this whole wrapper (not
+        // just between the trigger and the menu items inside it) —
+        // relatedTarget is null when focus leaves to somewhere outside
+        // the document entirely (e.g. clicking a different browser tab).
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="login-trigger"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-expanded={open}
+      >
+        Login <span className={`login-caret ${open ? "open" : ""}`}>▾</span>
+      </button>
+      {open && (
+        <div className="login-menu" role="menu">
+          <a href="/login" className="login-menu-item" role="menuitem">
+            <span className="login-menu-title">User login</span>
+            <span className="login-menu-sub">For your leasing team</span>
+          </a>
+          <a
+            href="/platform-admin/login"
+            className="login-menu-item"
+            role="menuitem"
+          >
+            <span className="login-menu-title">Admin login</span>
+            <span className="login-menu-sub">Platform administration</span>
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InquiryForm() {
   const [form, setForm] = useState({
     contact_name: "",
@@ -608,6 +667,47 @@ const landingStyles = `
   .landing-page nav a:hover{opacity:1;color:var(--clay-bright);}
   .landing-page .nav-links{display:flex;gap:32px;}
   @media(max-width:780px){.landing-page .nav-links{display:none;}}
+
+  .landing-page .login-dropdown{position:relative;}
+  .landing-page .login-trigger{
+    background:transparent;border:none;cursor:pointer;
+    color:var(--paper);opacity:0.75;
+    font-family:var(--body);font-size:14.5px;font-weight:500;
+    display:flex;align-items:center;gap:5px;
+    padding:8px 4px;
+    transition:opacity .2s ease;
+  }
+  .landing-page .login-trigger:hover{opacity:1;color:var(--clay-bright);}
+  .landing-page .login-caret{
+    font-size:11px;transition:transform .18s ease;display:inline-block;
+  }
+  .landing-page .login-caret.open{transform:rotate(180deg);}
+  .landing-page .login-menu{
+    position:absolute;top:calc(100% + 8px);left:50%;
+    transform:translateX(-50%);
+    background:var(--charcoal-soft);
+    border:1px solid var(--line);
+    border-radius:6px;
+    min-width:220px;
+    box-shadow:0 12px 28px rgba(0,0,0,0.35);
+    z-index:60;
+    overflow:hidden;
+  }
+  .landing-page .login-menu-item{
+    display:flex;flex-direction:column;gap:2px;
+    padding:12px 16px;
+    text-decoration:none;
+    border-bottom:1px solid var(--line);
+    transition:background .15s ease;
+  }
+  .landing-page .login-menu-item:last-child{border-bottom:none;}
+  .landing-page .login-menu-item:hover{background:rgba(251,248,243,0.06);}
+  .landing-page .login-menu-title{
+    font-size:14px;font-weight:600;color:var(--paper);
+  }
+  .landing-page .login-menu-sub{
+    font-family:var(--mono);font-size:11.5px;color:rgba(251,248,243,0.5);
+  }
 
   .landing-page .hero{
     background:var(--charcoal);

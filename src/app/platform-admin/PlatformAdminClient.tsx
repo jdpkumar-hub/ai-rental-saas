@@ -4,13 +4,21 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PlatformAdminSessionPayload } from "@/lib/platformAdminSession";
 
+type TwilioNumber = {
+  id: string;
+  phone_number: string;
+  label: string | null;
+  active: boolean;
+  created_at: string;
+};
+
 type Company = {
   id: string;
   company_name: string;
   company_code: string;
   email: string;
   phone: string | null;
-  twilio_number: string | null;
+  twilio_numbers: TwilioNumber[];
   subscription_plan: string;
   status: string;
   logo_url: string | null;
@@ -287,7 +295,7 @@ function CreateCompanyForm({
           placeholder="555-0100"
         />
         <FormField
-          label="Twilio Number"
+          label="Twilio Number (optional, add more after creating)"
           value={form.twilio_number}
           onChange={(v) => update("twilio_number", v)}
           placeholder="+15551234567"
@@ -348,7 +356,13 @@ function CompanyRow({
         <td style={styles.td}>{company.company_name}</td>
         <td style={{ ...styles.td, ...styles.mono }}>{company.company_code}</td>
         <td style={{ ...styles.td, ...styles.mono }}>
-          {company.twilio_number || <Muted>—</Muted>}
+          {company.twilio_numbers.length === 0 ? (
+            <Muted>—</Muted>
+          ) : company.twilio_numbers.length === 1 ? (
+            company.twilio_numbers[0].phone_number
+          ) : (
+            `${company.twilio_numbers[0].phone_number} +${company.twilio_numbers.length - 1} more`
+          )}
         </td>
         <td style={styles.td}>{capitalize(company.subscription_plan)}</td>
         <td style={styles.td}>
@@ -374,7 +388,6 @@ function CompanyDetail({
   company: Company;
   onUpdated: () => void;
 }) {
-  const [twilioNumber, setTwilioNumber] = useState(company.twilio_number ?? "");
   const [plan, setPlan] = useState(company.subscription_plan);
   const [status, setStatus] = useState(company.status);
   const [uploading, setUploading] = useState(false);
@@ -449,24 +462,6 @@ function CompanyDetail({
     <div style={styles.detailWrap}>
       <div style={styles.detailGrid}>
         <div style={styles.detailField}>
-          <label style={styles.detailLabel}>Twilio Number</label>
-          <div style={styles.inlineRow}>
-            <input
-              value={twilioNumber}
-              onChange={(e) => setTwilioNumber(e.target.value)}
-              placeholder="+15551234567"
-              style={styles.input}
-            />
-            <button
-              onClick={() => patchCompany({ twilio_number: twilioNumber || null })}
-              style={styles.secondaryButton}
-            >
-              Save
-            </button>
-          </div>
-        </div>
-
-        <div style={styles.detailField}>
           <label style={styles.detailLabel}>Plan</label>
           <select
             value={plan}
@@ -523,6 +518,8 @@ function CompanyDetail({
 
       {saveMsg && <div style={styles.saveMsg}>{saveMsg}</div>}
 
+      <NumbersSection companyId={company.id} initialNumbers={company.twilio_numbers} onUpdated={onUpdated} />
+
       <div style={styles.usersSection}>
         <div style={styles.detailLabel}>Logins at this company</div>
         {usersLoading ? (
@@ -539,6 +536,166 @@ function CompanyDetail({
       </div>
 
       <DangerZone company={company} />
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// NumbersSection
+//
+// Lets you add, deactivate, reactivate, or remove any number of Twilio
+// numbers for one company. Every number listed here routes to the SAME
+// shared greeting/config (company_settings) — there's no per-number
+// customization, per your choice. This is purely "which numbers ring
+// through to this company's assistant," not "which assistant."
+// ----------------------------------------------------------------------------
+function NumbersSection({
+  companyId,
+  initialNumbers,
+  onUpdated,
+}: {
+  companyId: string;
+  initialNumbers: TwilioNumber[];
+  onUpdated: () => void;
+}) {
+  const [numbers, setNumbers] = useState<TwilioNumber[]>(initialNumbers);
+  const [newNumber, setNewNumber] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${companyId}/numbers`);
+      const json = await res.json();
+      if (res.ok) setNumbers(json.numbers ?? []);
+    } catch {
+      // Keep showing the last known list rather than clearing it on a
+      // transient fetch failure.
+    }
+  }
+
+  async function handleAdd() {
+    if (!newNumber.trim()) {
+      setMsg("Enter a phone number first.");
+      return;
+    }
+    setAdding(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/platform-admin/companies/${companyId}/numbers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone_number: newNumber.trim(), label: newLabel.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error || "Failed to add number.");
+        setAdding(false);
+        return;
+      }
+      setNewNumber("");
+      setNewLabel("");
+      await refresh();
+      onUpdated();
+    } catch {
+      setMsg("Could not reach the server.");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function toggleActive(number: TwilioNumber) {
+    setMsg(null);
+    try {
+      const res = await fetch(
+        `/api/platform-admin/companies/${companyId}/numbers/${number.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active: !number.active }),
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json();
+        setMsg(data.error || "Update failed.");
+        return;
+      }
+      await refresh();
+      onUpdated();
+    } catch {
+      setMsg("Could not reach the server.");
+    }
+  }
+
+  async function handleRemove(number: TwilioNumber) {
+    setMsg(null);
+    try {
+      const res = await fetch(
+        `/api/platform-admin/companies/${companyId}/numbers/${number.id}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const data = await res.json();
+        setMsg(data.error || "Remove failed.");
+        return;
+      }
+      await refresh();
+      onUpdated();
+    } catch {
+      setMsg("Could not reach the server.");
+    }
+  }
+
+  return (
+    <div style={styles.usersSection}>
+      <div style={styles.detailLabel}>
+        Phone numbers ({numbers.length}) — all share the same greeting
+      </div>
+
+      {numbers.length === 0 ? (
+        <p style={styles.hint}>No numbers yet — add one below.</p>
+      ) : (
+        <div style={styles.usersTable}>
+          {numbers.map((n) => (
+            <div key={n.id} style={styles.userRow}>
+              <div style={styles.userRowMain}>
+                <span style={styles.mono}>{n.phone_number}</span>
+                {n.label && <span>· {n.label}</span>}
+                {!n.active && <span style={{ color: "#9A6B1F" }}>(inactive)</span>}
+                <button onClick={() => toggleActive(n)} style={styles.secondaryButton}>
+                  {n.active ? "Deactivate" : "Reactivate"}
+                </button>
+                <button
+                  onClick={() => handleRemove(n)}
+                  style={{ ...styles.secondaryButton, color: "#A8392B", borderColor: "#EFC9C0" }}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ ...styles.inlineRow, marginTop: 12 }}>
+        <input
+          value={newNumber}
+          onChange={(e) => setNewNumber(e.target.value)}
+          placeholder="+15551234567"
+          style={styles.input}
+        />
+        <input
+          value={newLabel}
+          onChange={(e) => setNewLabel(e.target.value)}
+          placeholder="Label (optional, e.g. Building B)"
+          style={styles.input}
+        />
+        <button onClick={handleAdd} disabled={adding} style={styles.primaryButton}>
+          {adding ? "Adding…" : "+ Add number"}
+        </button>
+      </div>
+      {msg && <div style={styles.saveMsg}>{msg}</div>}
     </div>
   );
 }

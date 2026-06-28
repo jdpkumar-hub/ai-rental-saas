@@ -52,11 +52,38 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 1. Look up which company owns this Twilio number
+  // 1. Look up which company owns this Twilio number, via the
+  // twilio_numbers table — this is what enables multiple numbers per
+  // company. Every number for a company shares the same greeting/config
+  // (company_settings), so once we know the company_id, the rest of
+  // this route is unchanged from before multi-number support.
+  const { data: numberRow, error: numberError } = await supabaseAdmin
+    .from("twilio_numbers")
+    .select("company_id")
+    .eq("phone_number", toNumber)
+    .eq("active", true)
+    .maybeSingle();
+
+  if (numberError) {
+    console.error("[voice/incoming] Twilio number lookup failed:", numberError);
+    return new NextResponse(buildErrorTwiml(), {
+      status: 200,
+      headers: { "Content-Type": "text/xml" },
+    });
+  }
+
+  if (!numberRow) {
+    console.error("[voice/incoming] No company registered for number", toNumber);
+    return new NextResponse(buildErrorTwiml(), {
+      status: 200,
+      headers: { "Content-Type": "text/xml" },
+    });
+  }
+
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
     .select("id, company_name, status")
-    .eq("twilio_number", toNumber)
+    .eq("id", numberRow.company_id)
     .maybeSingle();
 
   if (companyError) {

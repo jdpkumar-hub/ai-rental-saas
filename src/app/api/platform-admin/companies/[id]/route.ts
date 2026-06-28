@@ -5,7 +5,6 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 const ALLOWED_FIELDS = [
   "company_name",
   "phone",
-  "twilio_number",
   "subscription_plan",
   "status",
   "logo_url",
@@ -59,7 +58,7 @@ export async function PATCH(
     .update(updates)
     .eq("id", params.id)
     .select(
-      "id, company_name, company_code, email, phone, twilio_number, subscription_plan, status, logo_url, brand_color"
+      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color"
     )
     .single();
 

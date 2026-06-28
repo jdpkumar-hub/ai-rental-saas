@@ -20,7 +20,7 @@ export async function GET() {
   const { data: companies, error } = await supabaseAdmin
     .from("companies")
     .select(
-      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, created_at"
+      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at, created_at"
     )
     .order("created_at", { ascending: false });
 
@@ -81,6 +81,7 @@ export async function POST(request: NextRequest) {
     admin_name?: string;
     admin_email?: string;
     admin_password?: string;
+    trial_start_date?: string;
   };
 
   try {
@@ -126,6 +127,16 @@ export async function POST(request: NextRequest) {
 
   const normalizedCode = company_code.trim().toLowerCase();
 
+  // Trial starts now by default, but can be overridden if you're setting
+  // up a company in advance of when the customer will actually start
+  // using it (see trialStatus.ts for why this is a separate field from
+  // created_at).
+  const trialStartedAt = body.trial_start_date
+    ? new Date(body.trial_start_date)
+    : new Date();
+  const trialEndsAt = new Date(trialStartedAt);
+  trialEndsAt.setDate(trialEndsAt.getDate() + 14);
+
   const { data: existingCompany } = await supabaseAdmin
     .from("companies")
     .select("id")
@@ -148,6 +159,8 @@ export async function POST(request: NextRequest) {
       phone: phone?.trim() || null,
       subscription_plan: "trial",
       status: "active",
+      trial_started_at: trialStartedAt.toISOString(),
+      trial_ends_at: trialEndsAt.toISOString(),
     })
     .select("id, company_name, company_code")
     .single();

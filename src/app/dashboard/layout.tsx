@@ -1,22 +1,26 @@
+import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getTrialStatus } from "@/lib/trialStatus";
 
 // ----------------------------------------------------------------------------
 // Dashboard layout — wraps every /dashboard/* page.
 //
-// This is where company branding actually takes effect: we fetch the
-// logged-in user's company brand_color and inject it as an inline CSS
-// variable override on a wrapper div. Every existing page already
-// styles itself with var(--color-clay) (see globals.css), so overriding
-// that one variable here cascades the company's chosen color through
-// every nav link, button, and accent across the whole dashboard —
-// without needing to touch each page's own styles individually.
+// Two responsibilities:
 //
-// We use supabaseAdmin directly (not getTenantClient) since this is a
-// simple, read-only lookup of a single company's own branding by a
-// company_id we've already verified from the signed session — there's
-// no risk of cross-tenant leakage here, just one row, fetched once per
-// page load.
+// 1. TRIAL ENFORCEMENT (new): if this company is on the trial plan and
+// trial_ends_at has passed, redirect away from every dashboard page to
+// /trial-expired — a hard block, not just a banner, per your choice.
+// This check runs on every single dashboard page load (since every page
+// is nested under this layout), so there's no dashboard route that can
+// be reached by an expired trial company once this redirect fires.
+//
+// 2. BRANDING: fetch the logged-in user's company brand_color and inject
+// it as a CSS variable override (unchanged from before).
+//
+// We use supabaseAdmin directly (not getTenantClient) for both checks,
+// since these are simple, read-only lookups of a single company's own
+// data by a company_id already verified from the signed session.
 // ----------------------------------------------------------------------------
 export default async function DashboardLayout({
   children,
@@ -24,6 +28,13 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const session = await getSession();
+
+  if (session) {
+    const trial = await getTrialStatus(session.companyId);
+    if (trial.isExpired) {
+      redirect("/trial-expired");
+    }
+  }
 
   let brandColor = "#B5562F"; // matches the default in migration 0007
 

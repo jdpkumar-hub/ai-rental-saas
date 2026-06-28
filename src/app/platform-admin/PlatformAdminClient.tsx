@@ -23,6 +23,8 @@ type Company = {
   status: string;
   logo_url: string | null;
   brand_color: string;
+  trial_started_at: string | null;
+  trial_ends_at: string | null;
   created_at: string;
 };
 
@@ -194,6 +196,7 @@ function CompaniesTab() {
                 <th style={styles.th}>Code</th>
                 <th style={styles.th}>Twilio #</th>
                 <th style={styles.th}>Plan</th>
+                <th style={styles.th}>Trial</th>
                 <th style={styles.th}>Status</th>
                 <th style={styles.th}>Created</th>
               </tr>
@@ -366,13 +369,16 @@ function CompanyRow({
         </td>
         <td style={styles.td}>{capitalize(company.subscription_plan)}</td>
         <td style={styles.td}>
+          <TrialBadge company={company} />
+        </td>
+        <td style={styles.td}>
           <StatusBadge status={company.status} />
         </td>
         <td style={{ ...styles.td, ...styles.mono }}>{formatDate(company.created_at)}</td>
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={6} style={styles.expandedCell}>
+          <td colSpan={7} style={styles.expandedCell}>
             <CompanyDetail company={company} onUpdated={onUpdated} />
           </td>
         </tr>
@@ -477,6 +483,36 @@ function CompanyDetail({
             <option value="enterprise">Enterprise</option>
           </select>
         </div>
+
+        {company.subscription_plan === "trial" && (
+          <div style={styles.detailField}>
+            <label style={styles.detailLabel}>
+              Trial ends{" "}
+              {company.trial_ends_at &&
+                `(${formatDate(company.trial_ends_at)})`}
+            </label>
+            <div style={styles.inlineRow}>
+              <button
+                onClick={() => patchCompany({ trial_ends_at: addDaysFromNow(7) })}
+                style={styles.secondaryButton}
+              >
+                +7 days
+              </button>
+              <button
+                onClick={() => patchCompany({ trial_ends_at: addDaysFromNow(14) })}
+                style={styles.secondaryButton}
+              >
+                +14 days
+              </button>
+              <button
+                onClick={() => patchCompany({ trial_ends_at: addDaysFromNow(0) })}
+                style={{ ...styles.secondaryButton, color: "#A8392B", borderColor: "#EFC9C0" }}
+              >
+                Expire now
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={styles.detailField}>
           <label style={styles.detailLabel}>Status</label>
@@ -1200,6 +1236,39 @@ function FormField({
   );
 }
 
+function TrialBadge({ company }: { company: Company }) {
+  if (company.subscription_plan !== "trial") {
+    return <Muted>—</Muted>;
+  }
+  if (!company.trial_ends_at) {
+    return <Muted>Not started</Muted>;
+  }
+
+  const endsAt = new Date(company.trial_ends_at);
+  const now = new Date();
+  const daysRemaining = Math.ceil((endsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (daysRemaining <= 0) {
+    return (
+      <span style={{ ...styles.badge, backgroundColor: "#FBEAE6", color: "#A8392B" }}>
+        Expired
+      </span>
+    );
+  }
+  if (daysRemaining <= 3) {
+    return (
+      <span style={{ ...styles.badge, backgroundColor: "#FBF1E2", color: "#9A6B1F" }}>
+        {daysRemaining}d left
+      </span>
+    );
+  }
+  return (
+    <span style={{ ...styles.badge, backgroundColor: "#E8F0E9", color: "#4B6651" }}>
+      {daysRemaining}d left
+    </span>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const colorMap: Record<string, { bg: string; fg: string }> = {
     active: { bg: "#E8F0E9", fg: "#4B6651" },
@@ -1228,6 +1297,18 @@ function formatDate(iso: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+// Returns an ISO timestamp `days` days from right now — used by the
+// trial extension buttons ("+7 days", "+14 days", "Expire now" passes
+// 0). Always computed from the current moment, not from the existing
+// trial_ends_at, so clicking "+7 days" twice in a row gives a sensible
+// result (7 days from now, not 14 days from the old date) rather than
+// compounding unexpectedly.
+function addDaysFromNow(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
 }
 
 const styles: Record<string, React.CSSProperties> = {

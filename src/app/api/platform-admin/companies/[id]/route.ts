@@ -9,6 +9,7 @@ const ALLOWED_FIELDS = [
   "status",
   "logo_url",
   "brand_color",
+  "trial_ends_at",
 ];
 
 const VALID_STATUSES = ["active", "suspended", "cancelled"];
@@ -58,7 +59,7 @@ export async function PATCH(
     .update(updates)
     .eq("id", params.id)
     .select(
-      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color"
+      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at"
     )
     .single();
 

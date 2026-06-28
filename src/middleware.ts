@@ -66,11 +66,23 @@ export async function middleware(request: NextRequest) {
   // ----------------------------------------------------------------------
   if (pathname === "/" && !session) {
     try {
-      const res = await fetch(new URL("/api/landing-page", request.url));
+      // cache: "no-store" is essential here — Next.js automatically
+      // caches fetch() calls by default, which would mean middleware
+      // keeps serving the SAME landing page HTML it fetched the first
+      // time, ignoring any later change to which variant is live in
+      // platform-admin. This, combined with the route handler's own
+      // `dynamic = "force-dynamic"` (see /api/landing-page/route.ts),
+      // closes both layers that were causing stale caching.
+      const res = await fetch(new URL("/api/landing-page", request.url), {
+        cache: "no-store",
+      });
       const data = await res.json();
       return new NextResponse(data.html_content, {
         status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
       });
     } catch {
       // If the fetch itself fails for any reason, fall through to

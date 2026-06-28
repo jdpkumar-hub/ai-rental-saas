@@ -39,6 +39,16 @@ type Inquiry = {
   created_at: string;
 };
 
+type LandingPageVariant = {
+  id: string;
+  name: string;
+  html_content: string;
+  accent_color: string;
+  is_live: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 type AdminAccount = {
   id: string;
   name: string;
@@ -56,7 +66,7 @@ type CompanyUser = {
   created_at: string;
 };
 
-type Tab = "companies" | "inquiries" | "account";
+type Tab = "companies" | "inquiries" | "landing-pages" | "account";
 
 export default function PlatformAdminClient({
   session,
@@ -95,6 +105,12 @@ export default function PlatformAdminClient({
           <TabButton active={tab === "inquiries"} onClick={() => setTab("inquiries")}>
             Inquiries
           </TabButton>
+          <TabButton
+            active={tab === "landing-pages"}
+            onClick={() => setTab("landing-pages")}
+          >
+            Landing Pages
+          </TabButton>
           <TabButton active={tab === "account"} onClick={() => setTab("account")}>
             Account
           </TabButton>
@@ -102,6 +118,7 @@ export default function PlatformAdminClient({
 
         {tab === "companies" && <CompaniesTab />}
         {tab === "inquiries" && <InquiriesTab />}
+        {tab === "landing-pages" && <LandingPagesTab />}
         {tab === "account" && <AccountTab />}
       </main>
     </div>
@@ -1031,6 +1048,277 @@ function InquiriesTab() {
 // ============================================================================
 // Account tab
 // ============================================================================
+// ============================================================================
+// Landing Pages tab
+// ============================================================================
+function LandingPagesTab() {
+  const [variants, setVariants] = useState<LandingPageVariant[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [previewVariant, setPreviewVariant] = useState<LandingPageVariant | null>(
+    null
+  );
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchVariants();
+  }, []);
+
+  async function fetchVariants() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/platform-admin/landing-page-variants");
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error || "Failed to load variants");
+      } else {
+        setVariants(json.variants ?? []);
+      }
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleActivate(id: string) {
+    setActionMsg(null);
+    try {
+      const res = await fetch(
+        `/api/platform-admin/landing-page-variants/${id}/activate`,
+        { method: "POST" }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setActionMsg(data.error || "Failed to activate.");
+        return;
+      }
+      setActionMsg("✓ Now live");
+      fetchVariants();
+      setTimeout(() => setActionMsg(null), 2000);
+    } catch {
+      setActionMsg("Could not reach the server.");
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setActionMsg(null);
+    try {
+      const res = await fetch(`/api/platform-admin/landing-page-variants/${id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setActionMsg(data.error || "Failed to delete.");
+        return;
+      }
+      fetchVariants();
+    } catch {
+      setActionMsg("Could not reach the server.");
+    }
+  }
+
+  return (
+    <div>
+      <div style={styles.sectionTitleRow}>
+        <div>
+          <h2 style={styles.h2}>Landing Pages</h2>
+          <p style={styles.sectionSubtitle}>
+            Switch which design is live on the public marketing page with one
+            click, or upload a new raw-HTML variant.
+          </p>
+        </div>
+        <button onClick={() => setShowAddForm(true)} style={styles.primaryButton}>
+          + Add variant
+        </button>
+      </div>
+
+      {showAddForm && (
+        <AddVariantForm
+          onClose={() => setShowAddForm(false)}
+          onCreated={() => {
+            setShowAddForm(false);
+            fetchVariants();
+          }}
+        />
+      )}
+
+      {previewVariant && (
+        <div style={styles.previewOverlay} onClick={() => setPreviewVariant(null)}>
+          <div style={styles.previewModal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.previewModalHeader}>
+              <strong>{previewVariant.name}</strong>
+              <button
+                onClick={() => setPreviewVariant(null)}
+                style={styles.secondaryButton}
+              >
+                Close preview
+              </button>
+            </div>
+            <iframe
+              srcDoc={previewVariant.html_content}
+              style={styles.previewIframe}
+              title={`Preview of ${previewVariant.name}`}
+            />
+          </div>
+        </div>
+      )}
+
+      {loading && <div style={styles.loading}>Loading variants…</div>}
+      {error && <div style={styles.errorBox}>{error}</div>}
+      {actionMsg && <div style={styles.saveMsg}>{actionMsg}</div>}
+
+      {!loading && !error && (
+        <div style={styles.variantGrid}>
+          {variants.map((v) => (
+            <div
+              key={v.id}
+              style={{
+                ...styles.variantCard,
+                ...(v.is_live ? styles.variantCardLive : {}),
+              }}
+            >
+              <div style={styles.variantCardHeader}>
+                <strong>{v.name}</strong>
+                {v.is_live && <span style={styles.liveBadge}>LIVE</span>}
+              </div>
+              <div
+                style={{ ...styles.variantSwatch, backgroundColor: v.accent_color }}
+              />
+              <div style={styles.variantActions}>
+                <button
+                  onClick={() => setPreviewVariant(v)}
+                  style={styles.secondaryButton}
+                >
+                  Preview
+                </button>
+                {!v.is_live && (
+                  <button
+                    onClick={() => handleActivate(v.id)}
+                    style={styles.primaryButton}
+                  >
+                    Make live
+                  </button>
+                )}
+                {!v.is_live && (
+                  <button
+                    onClick={() => handleDelete(v.id)}
+                    style={{
+                      ...styles.secondaryButton,
+                      color: "#A8392B",
+                      borderColor: "#EFC9C0",
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddVariantForm({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [accentColor, setAccentColor] = useState("#B5562F");
+  const [htmlContent, setHtmlContent] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    setHtmlContent(text);
+    if (!name) {
+      // Default the name to the filename (minus extension) as a
+      // convenience — easy to rename before saving if desired.
+      setName(file.name.replace(/\.html?$/i, ""));
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!htmlContent) {
+      setError("Upload or paste an HTML file's contents first.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/platform-admin/landing-page-variants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          html_content: htmlContent,
+          accent_color: accentColor,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to add variant.");
+        setSubmitting(false);
+        return;
+      }
+      onCreated();
+    } catch {
+      setError("Could not reach the server.");
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={styles.formCard}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={styles.formGrid}>
+          <FormField label="Variant name" value={name} onChange={setName} required />
+          <div style={styles.detailField}>
+            <label style={styles.detailLabel}>Accent color</label>
+            <input
+              type="color"
+              value={accentColor}
+              onChange={(e) => setAccentColor(e.target.value)}
+              style={{ ...styles.input, padding: 2, height: 38 }}
+            />
+          </div>
+        </div>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>HTML file</label>
+          <input type="file" accept=".html,.htm" onChange={handleFileChange} style={styles.fileInput} />
+          <p style={styles.hint}>
+            Upload a complete HTML file (full document — DOCTYPE, head, body).
+            New variants are never made live automatically; activate it
+            afterward when you're ready.
+          </p>
+        </div>
+
+        {error && <div style={styles.formError}>{error}</div>}
+
+        <div style={styles.formActions}>
+          <button type="submit" disabled={submitting} style={styles.primaryButton}>
+            {submitting ? "Saving…" : "Save variant"}
+          </button>
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function AccountTab() {
   const [admins, setAdmins] = useState<AdminAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1577,5 +1865,72 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#F2ECE1",
     padding: "1px 6px",
     borderRadius: 3,
+  },
+  variantGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+    gap: 16,
+  },
+  variantCard: {
+    background: "white",
+    border: "1px solid #E4DDD0",
+    borderRadius: 8,
+    padding: 16,
+  },
+  variantCardLive: { border: "2px solid #B5562F" },
+  variantCardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+    fontSize: 14,
+  },
+  liveBadge: {
+    fontFamily: "monospace",
+    fontSize: 10,
+    fontWeight: 700,
+    color: "#B5562F",
+    border: "1px solid #B5562F",
+    borderRadius: 3,
+    padding: "2px 6px",
+  },
+  variantSwatch: {
+    width: "100%",
+    height: 50,
+    borderRadius: 6,
+    marginBottom: 12,
+  },
+  variantActions: { display: "flex", gap: 8, flexWrap: "wrap" },
+  previewOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 200,
+    padding: 24,
+  },
+  previewModal: {
+    background: "white",
+    borderRadius: 8,
+    width: "100%",
+    maxWidth: 1000,
+    height: "85vh",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+  },
+  previewModalHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "12px 16px",
+    borderBottom: "1px solid #E4DDD0",
+  },
+  previewIframe: {
+    flex: 1,
+    width: "100%",
+    border: "none",
   },
 };

@@ -5,6 +5,9 @@ import { verifyPlatformAdminSessionToken } from "@/lib/platformAdminSession";
 // ----------------------------------------------------------------------------
 // Route protection at the edge. This runs before any page renders.
 //
+// - / (root, logged out): serves the live landing page variant as a raw
+//   HTML response, bypassing React entirely. See the dedicated comment
+//   block below for why this can't just be normal JSX in page.tsx.
 // - /dashboard/* requires a valid COMPANY session -> bounce to /login.
 // - /login redirects to /dashboard if a company session already exists.
 // - /platform-admin/* (except /platform-admin/login itself) requires a
@@ -43,6 +46,40 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get("session")?.value;
   const session = token ? await verifySessionToken(token) : null;
 
+  // ----------------------------------------------------------------------
+  // Root path, logged out: serve the swappable landing page variant.
+  //
+  // Each variant (see migration 0012) is a COMPLETE standalone HTML
+  // document — its own <!DOCTYPE>, <head>, fonts, <style>, <body>. That's
+  // fundamentally incompatible with rendering through src/app/layout.tsx's
+  // React tree, which already provides its own <html><body> wrapper —
+  // nesting one full HTML document inside another isn't valid HTML and
+  // browsers won't render it correctly.
+  //
+  // Rather than import the Supabase client directly into this Edge
+  // middleware (a real dependency-compatibility risk we deliberately
+  // avoided for trial enforcement too — see trialStatus.ts's usage in
+  // the dashboard LAYOUT instead of here), this calls our own public,
+  // already-Edge-safe API route via plain fetch() and returns its HTML
+  // directly as the response — no React rendering involved at all for
+  // this one path.
+  // ----------------------------------------------------------------------
+  if (pathname === "/" && !session) {
+    try {
+      const res = await fetch(new URL("/api/landing-page", request.url));
+      const data = await res.json();
+      return new NextResponse(data.html_content, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    } catch {
+      // If the fetch itself fails for any reason, fall through to
+      // normal Next.js routing rather than showing a hard error — worst
+      // case the person sees whatever page.tsx renders by default.
+      return NextResponse.next();
+    }
+  }
+
   if (pathname.startsWith("/dashboard") && !session) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
@@ -55,5 +92,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login", "/platform-admin/:path*"],
+  matcher: ["/", "/dashboard/:path*", "/login", "/platform-admin/:path*"],
 };

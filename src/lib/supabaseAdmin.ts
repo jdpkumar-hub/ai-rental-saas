@@ -11,11 +11,30 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 //
 // For every other query (reading/writing data on behalf of a logged-in
 // user), use `getTenantClient(companyId)` below instead.
+//
+// IMPORTANT — fetch override: this client makes its network calls via
+// the global `fetch`, which Next.js patches server-side to auto-cache
+// GET requests by default. That patching applies to EVERY fetch call in
+// the server runtime, including ones made internally by third-party
+// libraries like @supabase/supabase-js — not just fetch() calls written
+// directly in our own route handlers. This was the actual remaining
+// cause of a real bug: switching the live landing page variant in
+// platform-admin would update the database correctly, but a stale,
+// previously-cached Supabase response could still be served afterward,
+// inconsistently, depending on whether THIS PARTICULAR query had been
+// cached before. Explicitly passing `cache: "no-store"` on every fetch
+// this client makes closes that gap at the source, rather than trying
+// to patch around it at every call site that happens to use this client.
 // ----------------------------------------------------------------------------
 export const supabaseAdmin: SupabaseClient = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { persistSession: false } }
+  {
+    auth: { persistSession: false },
+    global: {
+      fetch: (url, options) => fetch(url, { ...options, cache: "no-store" }),
+    },
+  }
 );
 
 // ----------------------------------------------------------------------------

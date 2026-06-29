@@ -67,7 +67,7 @@ export default function AnalyticsClient({ session }: { session: SessionPayload }
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
+    router.push("/"); // After logout, go to the public landing page rather than straight back to the login form -- per your request, signing out should feel like leaving the app, not landing on another form to fill in.
     router.refresh();
   }
 

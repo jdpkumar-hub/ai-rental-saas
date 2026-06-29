@@ -49,6 +49,20 @@ type LandingPageVariant = {
   updated_at: string;
 };
 
+type PricingPlan = {
+  id: string;
+  plan_key: string;
+  name: string;
+  tagline: string;
+  description: string;
+  setup_fee: number;
+  monthly_fee: number;
+  features: string[];
+  is_featured: boolean;
+  display_order: number;
+  active: boolean;
+};
+
 type AdminAccount = {
   id: string;
   name: string;
@@ -66,7 +80,7 @@ type CompanyUser = {
   created_at: string;
 };
 
-type Tab = "companies" | "inquiries" | "landing-pages" | "account";
+type Tab = "companies" | "inquiries" | "landing-pages" | "pricing" | "account";
 
 export default function PlatformAdminClient({
   session,
@@ -78,7 +92,9 @@ export default function PlatformAdminClient({
 
   async function handleLogout() {
     await fetch("/api/platform-admin/auth/logout", { method: "POST" });
-    router.push("/platform-admin/login");
+    // Same reasoning as the company dashboard's logout: land on the
+    // public marketing page, not straight back to a login form.
+    router.push("/");
     router.refresh();
   }
 
@@ -111,6 +127,9 @@ export default function PlatformAdminClient({
           >
             Landing Pages
           </TabButton>
+          <TabButton active={tab === "pricing"} onClick={() => setTab("pricing")}>
+            Pricing
+          </TabButton>
           <TabButton active={tab === "account"} onClick={() => setTab("account")}>
             Account
           </TabButton>
@@ -119,6 +138,7 @@ export default function PlatformAdminClient({
         {tab === "companies" && <CompaniesTab />}
         {tab === "inquiries" && <InquiriesTab />}
         {tab === "landing-pages" && <LandingPagesTab />}
+        {tab === "pricing" && <PricingTab />}
         {tab === "account" && <AccountTab />}
       </main>
     </div>
@@ -1319,6 +1339,293 @@ function AddVariantForm({
   );
 }
 
+// ============================================================================
+// Pricing tab
+// ============================================================================
+function PricingTab() {
+  const [plans, setPlans] = useState<PricingPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchPlans();
+  }, []);
+
+  async function fetchPlans() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/platform-admin/pricing-plans");
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error || "Failed to load pricing plans");
+      } else {
+        setPlans(json.plans ?? []);
+      }
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <h2 style={styles.h2}>Pricing</h2>
+      <p style={styles.sectionSubtitle}>
+        Edit prices, names, and feature lists here — every landing page variant
+        pulls these numbers live, so a change here updates the public site
+        immediately, with no code or HTML edits.
+      </p>
+
+      {loading && <div style={styles.loading}>Loading plans…</div>}
+      {error && <div style={styles.errorBox}>{error}</div>}
+
+      {!loading && !error && (
+        <div style={styles.variantGrid}>
+          {plans.map((plan) => (
+            <PricingPlanCard key={plan.id} plan={plan} onUpdated={fetchPlans} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PricingPlanCard({
+  plan,
+  onUpdated,
+}: {
+  plan: PricingPlan;
+  onUpdated: () => void;
+}) {
+  const [name, setName] = useState(plan.name);
+  const [tagline, setTagline] = useState(plan.tagline);
+  const [description, setDescription] = useState(plan.description);
+  const [setupFee, setSetupFee] = useState(String(plan.setup_fee));
+  const [monthlyFee, setMonthlyFee] = useState(String(plan.monthly_fee));
+  const [featuresText, setFeaturesText] = useState(plan.features.join("\n"));
+  const [msg, setMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/platform-admin/pricing-plans/${plan.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          tagline,
+          description,
+          setup_fee: parseInt(setupFee, 10) || 0,
+          monthly_fee: parseInt(monthlyFee, 10) || 0,
+          features: featuresText
+            .split("\n")
+            .map((f) => f.trim())
+            .filter(Boolean),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error || "Failed to save.");
+      } else {
+        setMsg("✓ Saved — live on the site now");
+        onUpdated();
+        setTimeout(() => setMsg(null), 2500);
+      }
+    } catch {
+      setMsg("Could not reach the server.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ ...styles.formCard, minWidth: 320 }}>
+      <div style={styles.cardTitle}>
+        {plan.name} {plan.is_featured && <span style={styles.liveBadge}>FEATURED</span>}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <FormField label="Plan name" value={name} onChange={setName} />
+        <FormField label="Tagline" value={tagline} onChange={setTagline} />
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>Description</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            style={{ ...styles.input, minHeight: 60, fontFamily: "inherit" }}
+          />
+        </div>
+        <div style={styles.formGrid}>
+          <FormField label="Setup fee ($)" value={setupFee} onChange={setSetupFee} type="number" />
+          <FormField label="Monthly fee ($)" value={monthlyFee} onChange={setMonthlyFee} type="number" />
+        </div>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>Features (one per line)</label>
+          <textarea
+            value={featuresText}
+            onChange={(e) => setFeaturesText(e.target.value)}
+            style={{ ...styles.input, minHeight: 110, fontFamily: "inherit" }}
+          />
+        </div>
+        {msg && <div style={styles.saveMsg}>{msg}</div>}
+        <button onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+          {saving ? "Saving…" : "Save changes"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// SiteSettingsCard
+//
+// Lets you set a background color and/or image for each of the two
+// login screens independently (company login vs platform-admin login)
+// -- closes the gap where these were previously only changeable by
+// editing code. A live preview swatch shows the color before saving;
+// the actual login page itself is the real "preview" beyond that, since
+// these are full-page backgrounds rather than something easy to mock
+// up in a small card.
+// ----------------------------------------------------------------------------
+function SiteSettingsCard() {
+  const [companyColor, setCompanyColor] = useState("#F4EEE3");
+  const [companyImage, setCompanyImage] = useState("");
+  const [platformColor, setPlatformColor] = useState("#1C1815");
+  const [platformImage, setPlatformImage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  async function fetchSettings() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/platform-admin/site-settings");
+      const json = await res.json();
+      if (res.ok && json.settings) {
+        setCompanyColor(json.settings.login_background_color ?? "#F4EEE3");
+        setCompanyImage(json.settings.login_background_image ?? "");
+        setPlatformColor(json.settings.platform_login_background_color ?? "#1C1815");
+        setPlatformImage(json.settings.platform_login_background_image ?? "");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/platform-admin/site-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          login_background_color: companyColor,
+          login_background_image: companyImage || null,
+          platform_login_background_color: platformColor,
+          platform_login_background_image: platformImage || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error || "Failed to save.");
+      } else {
+        setMsg("✓ Saved — visible on both login pages now");
+        setTimeout(() => setMsg(null), 2500);
+      }
+    } catch {
+      setMsg("Could not reach the server.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <div style={styles.loading}>Loading site settings…</div>;
+  }
+
+  return (
+    <div style={styles.formCard}>
+      <div style={styles.cardTitle}>Login page backgrounds</div>
+      <p style={styles.sectionSubtitle}>
+        A background color and an optional image, set independently for each
+        login screen.
+      </p>
+      <div style={styles.formGrid}>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>User login — background color</label>
+          <div style={styles.inlineRow}>
+            <input
+              type="color"
+              value={companyColor}
+              onChange={(e) => setCompanyColor(e.target.value)}
+              style={{ ...styles.input, padding: 2, height: 38, width: 60 }}
+            />
+            <input
+              type="text"
+              value={companyColor}
+              onChange={(e) => setCompanyColor(e.target.value)}
+              style={styles.input}
+            />
+          </div>
+        </div>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>User login — background image URL</label>
+          <input
+            type="text"
+            value={companyImage}
+            onChange={(e) => setCompanyImage(e.target.value)}
+            placeholder="https://… (optional)"
+            style={styles.input}
+          />
+        </div>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>Admin login — background color</label>
+          <div style={styles.inlineRow}>
+            <input
+              type="color"
+              value={platformColor}
+              onChange={(e) => setPlatformColor(e.target.value)}
+              style={{ ...styles.input, padding: 2, height: 38, width: 60 }}
+            />
+            <input
+              type="text"
+              value={platformColor}
+              onChange={(e) => setPlatformColor(e.target.value)}
+              style={styles.input}
+            />
+          </div>
+        </div>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>Admin login — background image URL</label>
+          <input
+            type="text"
+            value={platformImage}
+            onChange={(e) => setPlatformImage(e.target.value)}
+            placeholder="https://… (optional)"
+            style={styles.input}
+          />
+        </div>
+      </div>
+      {msg && <div style={styles.saveMsg}>{msg}</div>}
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        style={{ ...styles.primaryButton, marginTop: 14 }}
+      >
+        {saving ? "Saving…" : "Save backgrounds"}
+      </button>
+    </div>
+  );
+}
+
 function AccountTab() {
   const [admins, setAdmins] = useState<AdminAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1348,6 +1655,10 @@ function AccountTab() {
       <div style={styles.accountGrid}>
         <ChangePasswordCard />
         <AddAdminCard onAdded={fetchAdmins} />
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <SiteSettingsCard />
       </div>
 
       <div style={{ marginTop: 24 }}>

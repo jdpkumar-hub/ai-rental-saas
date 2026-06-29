@@ -1495,6 +1495,7 @@ function SiteSettingsCard() {
   const [companyImage, setCompanyImage] = useState("");
   const [platformColor, setPlatformColor] = useState("#1C1815");
   const [platformImage, setPlatformImage] = useState("");
+  const [contactEmail, setContactEmail] = useState("hello@yourdomain.com");
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1513,6 +1514,7 @@ function SiteSettingsCard() {
         setCompanyImage(json.settings.login_background_image ?? "");
         setPlatformColor(json.settings.platform_login_background_color ?? "#1C1815");
         setPlatformImage(json.settings.platform_login_background_image ?? "");
+        setContactEmail(json.settings.contact_email ?? "hello@yourdomain.com");
       }
     } finally {
       setLoading(false);
@@ -1531,13 +1533,14 @@ function SiteSettingsCard() {
           login_background_image: companyImage || null,
           platform_login_background_color: platformColor,
           platform_login_background_image: platformImage || null,
+          contact_email: contactEmail,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         setMsg(data.error || "Failed to save.");
       } else {
-        setMsg("✓ Saved — visible on both login pages now");
+        setMsg("✓ Saved — visible on both login pages and the landing page footer now");
         setTimeout(() => setMsg(null), 2500);
       }
     } catch {
@@ -1559,6 +1562,17 @@ function SiteSettingsCard() {
         login screen.
       </p>
       <div style={styles.formGrid}>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>Footer contact email</label>
+          <input
+            type="email"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+            placeholder="hello@yourdomain.com"
+            style={styles.input}
+          />
+        </div>
+        <div style={{ ...styles.detailField, visibility: "hidden" }} />
         <div style={styles.detailField}>
           <label style={styles.detailLabel}>User login — background color</label>
           <div style={styles.inlineRow}>

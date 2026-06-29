@@ -11,7 +11,7 @@ export async function GET() {
   const { data } = await supabaseAdmin
     .from("site_settings")
     .select(
-      "login_background_color, login_background_image, platform_login_background_color, platform_login_background_image"
+      "login_background_color, login_background_image, platform_login_background_color, platform_login_background_image, contact_email"
     )
     .eq("id", 1)
     .maybeSingle();
@@ -23,6 +23,7 @@ export async function GET() {
       platform_login_background_color:
         data?.platform_login_background_color ?? "#1C1815",
       platform_login_background_image: data?.platform_login_background_image ?? null,
+      contact_email: data?.contact_email ?? "hello@yourdomain.com",
     },
     { headers: { "Cache-Control": "no-store" } }
   );

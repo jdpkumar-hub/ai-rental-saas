@@ -34,6 +34,7 @@ export async function PATCH(request: NextRequest) {
     login_background_image?: string | null;
     platform_login_background_color?: string;
     platform_login_background_image?: string | null;
+    contact_email?: string;
   };
   try {
     body = await request.json();
@@ -42,6 +43,14 @@ export async function PATCH(request: NextRequest) {
   }
 
   const updates: Record<string, unknown> = {};
+
+  if (body.contact_email !== undefined) {
+    const email = body.contact_email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: "Please enter a valid email." }, { status: 400 });
+    }
+    updates.contact_email = email;
+  }
 
   if (body.login_background_color !== undefined) {
     if (!HEX_COLOR_PATTERN.test(body.login_background_color)) {

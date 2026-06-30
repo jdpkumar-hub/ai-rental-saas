@@ -1490,6 +1490,68 @@ function PricingPlanCard({
 // these are full-page backgrounds rather than something easy to mock
 // up in a small card.
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// TestEmailCard
+//
+// Lets you confirm Gmail SMTP sending actually works end to end before
+// any trial-reminder logic depends on it — type an address, click send,
+// check your inbox.
+// ----------------------------------------------------------------------------
+function TestEmailCard() {
+  const [to, setTo] = useState("");
+  const [sending, setSending] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function handleSend() {
+    if (!to) {
+      setMsg("Enter an email address first.");
+      return;
+    }
+    setSending(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/platform-admin/test-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error || "Failed to send.");
+      } else {
+        setMsg("✓ Sent — check the inbox (and spam folder) in a moment.");
+      }
+    } catch {
+      setMsg("Could not reach the server.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div style={styles.formCard}>
+      <div style={styles.cardTitle}>Test email sending</div>
+      <p style={styles.sectionSubtitle}>
+        Confirms Gmail SMTP is correctly configured before any trial-reminder
+        emails depend on it.
+      </p>
+      <div style={styles.inlineRow}>
+        <input
+          type="email"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+          placeholder="you@example.com"
+          style={styles.input}
+        />
+        <button onClick={handleSend} disabled={sending} style={styles.primaryButton}>
+          {sending ? "Sending…" : "Send test email"}
+        </button>
+      </div>
+      {msg && <div style={styles.saveMsg}>{msg}</div>}
+    </div>
+  );
+}
+
 function SiteSettingsCard() {
   const [companyColor, setCompanyColor] = useState("#F4EEE3");
   const [companyImage, setCompanyImage] = useState("");
@@ -1669,6 +1731,10 @@ function AccountTab() {
       <div style={styles.accountGrid}>
         <ChangePasswordCard />
         <AddAdminCard onAdded={fetchAdmins} />
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <TestEmailCard />
       </div>
 
       <div style={{ marginTop: 20 }}>

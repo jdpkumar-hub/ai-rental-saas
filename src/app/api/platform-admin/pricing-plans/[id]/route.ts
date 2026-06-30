@@ -8,6 +8,8 @@ const ALLOWED_FIELDS = [
   "description",
   "setup_fee",
   "monthly_fee",
+  "quarterly_fee",
+  "yearly_fee",
   "features",
   "is_featured",
   "display_order",
@@ -62,6 +64,24 @@ export async function PATCH(
   ) {
     return NextResponse.json(
       { error: "Monthly fee must be a non-negative number." },
+      { status: 400 }
+    );
+  }
+  if (
+    "quarterly_fee" in updates &&
+    (typeof updates.quarterly_fee !== "number" || updates.quarterly_fee < 0)
+  ) {
+    return NextResponse.json(
+      { error: "Quarterly fee must be a non-negative number." },
+      { status: 400 }
+    );
+  }
+  if (
+    "yearly_fee" in updates &&
+    (typeof updates.yearly_fee !== "number" || updates.yearly_fee < 0)
+  ) {
+    return NextResponse.json(
+      { error: "Yearly fee must be a non-negative number." },
       { status: 400 }
     );
   }

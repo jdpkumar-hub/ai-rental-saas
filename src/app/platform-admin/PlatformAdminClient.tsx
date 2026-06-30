@@ -57,6 +57,8 @@ type PricingPlan = {
   description: string;
   setup_fee: number;
   monthly_fee: number;
+  quarterly_fee: number;
+  yearly_fee: number;
   features: string[];
   is_featured: boolean;
   display_order: number;
@@ -1404,6 +1406,8 @@ function PricingPlanCard({
   const [description, setDescription] = useState(plan.description);
   const [setupFee, setSetupFee] = useState(String(plan.setup_fee));
   const [monthlyFee, setMonthlyFee] = useState(String(plan.monthly_fee));
+  const [quarterlyFee, setQuarterlyFee] = useState(String(plan.quarterly_fee));
+  const [yearlyFee, setYearlyFee] = useState(String(plan.yearly_fee));
   const [featuresText, setFeaturesText] = useState(plan.features.join("\n"));
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1421,6 +1425,8 @@ function PricingPlanCard({
           description,
           setup_fee: parseInt(setupFee, 10) || 0,
           monthly_fee: parseInt(monthlyFee, 10) || 0,
+          quarterly_fee: parseInt(quarterlyFee, 10) || 0,
+          yearly_fee: parseInt(yearlyFee, 10) || 0,
           features: featuresText
             .split("\n")
             .map((f) => f.trim())
@@ -1459,8 +1465,20 @@ function PricingPlanCard({
           />
         </div>
         <div style={styles.formGrid}>
-          <FormField label="Setup fee ($)" value={setupFee} onChange={setSetupFee} type="number" />
+          <FormField label="Setup fee ($, one-time)" value={setupFee} onChange={setSetupFee} type="number" />
           <FormField label="Monthly fee ($)" value={monthlyFee} onChange={setMonthlyFee} type="number" />
+          <FormField
+            label="Quarterly fee ($, total per 3mo)"
+            value={quarterlyFee}
+            onChange={setQuarterlyFee}
+            type="number"
+          />
+          <FormField
+            label="Yearly fee ($, total per 12mo)"
+            value={yearlyFee}
+            onChange={setYearlyFee}
+            type="number"
+          />
         </div>
         <div style={styles.detailField}>
           <label style={styles.detailLabel}>Features (one per line)</label>

@@ -17,7 +17,7 @@ export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("pricing_plans")
     .select(
-      "plan_key, name, tagline, description, setup_fee, monthly_fee, features, is_featured, display_order"
+      "plan_key, name, tagline, description, setup_fee, monthly_fee, quarterly_fee, yearly_fee, features, is_featured, display_order"
     )
     .eq("active", true)
     .order("display_order", { ascending: true });

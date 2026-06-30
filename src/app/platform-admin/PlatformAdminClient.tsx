@@ -1348,6 +1348,10 @@ function PricingTab() {
   const [plans, setPlans] = useState<PricingPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResults, setSyncResults] = useState<
+    Array<{ plan_key: string; status: string; error?: string }> | null
+  >(null);
 
   useEffect(() => {
     fetchPlans();
@@ -1371,14 +1375,63 @@ function PricingTab() {
     }
   }
 
+  async function handleStripeSync() {
+    setSyncing(true);
+    setSyncResults(null);
+    try {
+      const res = await fetch("/api/platform-admin/stripe-sync", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setSyncResults(data.results);
+        fetchPlans();
+      } else {
+        setSyncResults([{ plan_key: "—", status: "failed", error: data.error }]);
+      }
+    } catch {
+      setSyncResults([{ plan_key: "—", status: "failed", error: "Could not reach the server." }]);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <div>
-      <h2 style={styles.h2}>Pricing</h2>
-      <p style={styles.sectionSubtitle}>
-        Edit prices, names, and feature lists here — every landing page variant
-        pulls these numbers live, so a change here updates the public site
-        immediately, with no code or HTML edits.
+      <div style={styles.sectionTitleRow}>
+        <div>
+          <h2 style={styles.h2}>Pricing</h2>
+          <p style={styles.sectionSubtitle}>
+            Edit prices, names, and feature lists here — every landing page variant
+            pulls these numbers live, so a change here updates the public site
+            immediately, with no code or HTML edits.
+          </p>
+        </div>
+        <button onClick={handleStripeSync} disabled={syncing} style={styles.primaryButton}>
+          {syncing ? "Syncing…" : "Sync to Stripe"}
+        </button>
+      </div>
+
+      <p style={styles.hint}>
+        "Sync to Stripe" creates real Stripe Price objects matching the numbers
+        below. Run this once after setting prices, and again any time you
+        change a price — Stripe prices can't be edited in place, so this
+        creates fresh ones each time and points new checkouts at them.
       </p>
+
+      {syncResults && (
+        <div style={{ ...styles.formCard, marginTop: 12, marginBottom: 20 }}>
+          <div style={styles.cardTitle}>Sync results</div>
+          {syncResults.map((r, i) => (
+            <div key={i} style={{ fontSize: 13, marginBottom: 4 }}>
+              <strong>{r.plan_key}</strong>:{" "}
+              {r.status === "synced" ? (
+                <span style={{ color: "#4B6651" }}>✓ synced</span>
+              ) : (
+                <span style={{ color: "#A8392B" }}>✗ {r.error}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {loading && <div style={styles.loading}>Loading plans…</div>}
       {error && <div style={styles.errorBox}>{error}</div>}

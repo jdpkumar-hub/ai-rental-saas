@@ -16,5 +16,5 @@ function getStripeSecretKey(): string {
 }
 
 export const stripe = new Stripe(getStripeSecretKey(), {
-  apiVersion: "2025-02-24.acacia",
+  apiVersion: "2026-06-24.dahlia",
 });

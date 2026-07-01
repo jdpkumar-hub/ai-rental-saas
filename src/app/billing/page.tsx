@@ -7,15 +7,15 @@ import BillingClient, { BillingPlan } from "./BillingClient";
 // ----------------------------------------------------------------------------
 // /billing  (tenant-facing)
 //
-// Where a tenant lands to subscribe -- either voluntarily (upgrading during a
-// trial) or because the trial-guard sent them here after their trial expired.
+// Where a tenant lands to subscribe -- voluntarily during a trial, or because
+// the dashboard access-guard sent them here after their trial expired.
 //
 // Server component: verifies the company session, loads the active pricing
-// plans and this company's brand color + current status, then hands the
-// interactive picker (BillingClient) the data it needs. If a tenant who
-// already has an active subscription lands here, we still let them view it
-// (they may be changing plans) -- blocking is the layout guard's job, not
-// this page's.
+// plans + this company's brand color + trial status, and injects the brand
+// color as the --color-clay / --color-clay-dark CSS variables (same as the
+// dashboard layout does) so this page -- which lives OUTSIDE /dashboard and
+// therefore doesn't inherit that layout's injection -- still shows the
+// company's own accent color. Then it renders the interactive picker.
 // ----------------------------------------------------------------------------
 
 export const dynamic = "force-dynamic";
@@ -31,8 +31,8 @@ type PlanRow = {
   active: boolean;
 };
 
-// features is stored as text (one per line) or a JSON array depending on how
-// the platform-admin editor saved it -- normalize both into string[].
+// features may be stored as newline text (the platform-admin "one per line"
+// textarea) or a JSON array -- normalize both into string[].
 function normalizeFeatures(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
   if (typeof raw === "string") {
@@ -44,15 +44,41 @@ function normalizeFeatures(raw: unknown): string[] {
   return [];
 }
 
-export default async function BillingPage() {
+function isValidHexColor(value: string): boolean {
+  return /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(value);
+}
+
+function darkenHexColor(hex: string, amount: number): string {
+  const normalized =
+    hex.length === 4 ? "#" + [...hex.slice(1)].map((c) => c + c).join("") : hex;
+  const r = parseInt(normalized.slice(1, 3), 16);
+  const g = parseInt(normalized.slice(3, 5), 16);
+  const b = parseInt(normalized.slice(5, 7), 16);
+  const darken = (ch: number) => Math.max(0, Math.round(ch * (1 - amount)));
+  const toHex = (ch: number) => ch.toString(16).padStart(2, "0");
+  return `#${toHex(darken(r))}${toHex(darken(g))}${toHex(darken(b))}`;
+}
+
+export default async function BillingPage({
+  searchParams,
+}: {
+  searchParams: { status?: string };
+}) {
   const session = await getSession();
   if (!session) {
     redirect("/login");
   }
 
+  // Just completed checkout? The webhook has (near-instantly) marked this
+  // company active; send them into the dashboard, where the access guard
+  // will confirm the subscription and admit them. Avoids leaving a paying
+  // tenant staring at the plan picker after a successful payment.
+  if (searchParams?.status === "success") {
+    redirect("/dashboard");
+  }
+
   const { companyId } = session;
 
-  // Load active plans (source of truth for what a tenant can buy).
   const { data: planRows } = await supabaseAdmin
     .from("pricing_plans")
     .select("plan_key, name, description, monthly_fee, quarterly_fee, yearly_fee, features, active")
@@ -69,30 +95,54 @@ export default async function BillingPage() {
     features: normalizeFeatures(p.features),
   }));
 
-  // This company's brand color + trial status for the banner.
   const { data: company } = await supabaseAdmin
     .from("companies")
     .select("company_name, brand_color")
     .eq("id", companyId)
     .maybeSingle();
 
+  const brandColor =
+    company?.brand_color && isValidHexColor(company.brand_color)
+      ? company.brand_color
+      : "#B5562F";
+  const brandColorDark = darkenHexColor(brandColor, 0.22);
+
   const trial = await getTrialStatus(companyId);
 
   return (
-    <main style={{ background: "#F7F4EC", minHeight: "100vh", paddingTop: 48, paddingBottom: 64 }}>
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 24px 24px" }}>
+    <div
+      style={
+        {
+          "--color-clay": brandColor,
+          "--color-clay-dark": brandColorDark,
+          background: "var(--color-bg)",
+          minHeight: "100vh",
+          paddingTop: 48,
+          paddingBottom: 64,
+        } as React.CSSProperties
+      }
+    >
+      <div style={{ maxWidth: 1040, margin: "0 auto", padding: "0 32px 24px" }}>
         <h1
           style={{
-            fontFamily: 'Georgia, "Times New Roman", serif',
-            fontSize: 40,
-            fontWeight: 700,
-            color: "#1F2937",
+            fontFamily: "var(--font-display)",
+            fontSize: 28,
+            fontWeight: 600,
+            color: "var(--color-ink)",
             margin: "0 0 8px",
           }}
         >
           Choose your plan
         </h1>
-        <p style={{ color: "#6B6559", fontSize: 16, margin: "0 0 8px", lineHeight: 1.5 }}>
+        <p
+          style={{
+            color: "var(--color-ink-muted)",
+            fontSize: 14.5,
+            margin: 0,
+            maxWidth: 560,
+            lineHeight: 1.5,
+          }}
+        >
           {company?.company_name ?? "Your company"} — pick the plan and billing cycle
           that fits, then continue to secure payment.
         </p>
@@ -102,8 +152,7 @@ export default async function BillingPage() {
         plans={plans}
         trialExpired={trial.isExpired}
         trialDaysRemaining={trial.isExpired ? null : trial.daysRemaining}
-        brandColor={company?.brand_color ?? "#1F3A5F"}
       />
-    </main>
+    </div>
   );
 }

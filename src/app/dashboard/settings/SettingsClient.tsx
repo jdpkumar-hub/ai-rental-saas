@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SessionPayload } from "@/lib/session";
+import ManageSubscriptionButton from "./ManageSubscriptionButton";
 
 type Branding = {
   company_name: string;
@@ -255,6 +256,18 @@ export default function SettingsClient({ session }: { session: SessionPayload })
             </div>
           </div>
         )}
+
+        {/* Billing -- opens the Stripe-hosted customer portal to update card,
+            change plan, view invoices, or cancel. This page is already gated
+            to admin/manager by the server component. */}
+        <div style={styles.billingCard}>
+          <div style={styles.billingTitle}>Billing</div>
+          <p style={styles.billingText}>
+            Update your payment method, change your plan, view invoices, or cancel
+            your subscription. This opens a secure billing portal managed by Stripe.
+          </p>
+          <ManageSubscriptionButton />
+        </div>
       </main>
     </div>
   );
@@ -318,6 +331,29 @@ const styles: Record<string, React.CSSProperties> = {
   main: { maxWidth: 1000, margin: "0 auto", padding: "40px 32px 64px" },
   h1: { fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 600, margin: 0 },
   subtitle: { color: "var(--color-ink-muted)", fontSize: 14.5, marginTop: 8, maxWidth: 560 },
+  billingCard: {
+    background: "var(--color-surface)",
+    border: "1px solid var(--color-border)",
+    borderRadius: 10,
+    boxShadow: "var(--shadow-card)",
+    padding: 24,
+    marginTop: 24,
+  },
+  billingTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "var(--color-ink-muted)",
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+    marginBottom: 8,
+  },
+  billingText: {
+    fontSize: 13.5,
+    color: "var(--color-ink-muted)",
+    lineHeight: 1.5,
+    margin: "0 0 16px",
+    maxWidth: 520,
+  },
   loading: { color: "var(--color-ink-muted)", fontSize: 14, marginTop: 24 },
   errorBox: {
     background: "#FBEAE6",

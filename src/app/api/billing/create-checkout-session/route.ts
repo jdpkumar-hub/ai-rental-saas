@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   // supabaseAdmin filtered by the verified session companyId.
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id, company_name, email, stripe_customer_id")
+    .select("id, company_name, email, stripe_customer_id, setup_fee_cents, setup_fee_paid_at")
     .eq("id", companyId)
     .maybeSingle();
 
@@ -137,6 +137,41 @@ export async function POST(req: NextRequest) {
       process.env.NEXT_PUBLIC_APP_URL ??
       "https://ai-rental-saas.vercel.app";
 
+    // One-time setup fee: charged ONLY on the first checkout (setup_fee_paid_at
+    // is null) and ONLY if this company has a non-zero fee (0 == waived). It's
+    // added as a one-time invoice item via subscription_data.add_invoice_items,
+    // so it lands on the FIRST invoice alongside the recurring subscription --
+    // a single combined first charge, then subscription-only on renewals.
+    // The amount is dynamic (per company), so we use inline price_data rather
+    // than a pre-created Stripe Price.
+    const setupFeeCents = Number(company.setup_fee_cents ?? 0);
+    const chargeSetupFee = setupFeeCents > 0 && !company.setup_fee_paid_at;
+
+    const subscriptionData: {
+      metadata: Record<string, string>;
+      add_invoice_items?: Array<{ price_data: { currency: string; product_data: { name: string }; unit_amount: number } }>;
+    } = {
+      metadata: {
+        company_id: company.id,
+        plan_key: planRow.plan_key ?? planKey,
+        cycle,
+        // Flag so the webhook knows to stamp setup_fee_paid_at on completion.
+        setup_fee_charged: chargeSetupFee ? "true" : "false",
+      },
+    };
+
+    if (chargeSetupFee) {
+      subscriptionData.add_invoice_items = [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: "One-time onboarding setup fee" },
+            unit_amount: setupFeeCents,
+          },
+        },
+      ];
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
@@ -145,17 +180,12 @@ export async function POST(req: NextRequest) {
       cancel_url: `${origin}/billing?status=canceled`,
       // These flow back to us on the webhook so we know which company +
       // plan + cycle this completed checkout corresponds to.
-      subscription_data: {
-        metadata: {
-          company_id: company.id,
-          plan_key: planRow.plan_key ?? planKey,
-          cycle,
-        },
-      },
+      subscription_data: subscriptionData,
       metadata: {
         company_id: company.id,
         plan_key: planRow.plan_key ?? planKey,
         cycle,
+        setup_fee_charged: chargeSetupFee ? "true" : "false",
       },
     });
 

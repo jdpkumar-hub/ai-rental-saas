@@ -20,7 +20,7 @@ export async function GET() {
   const { data: companies, error } = await supabaseAdmin
     .from("companies")
     .select(
-      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at, created_at"
+      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at, created_at,setup_fee_cents, setup_fee_paid_at"
     )
     .order("created_at", { ascending: false });
 

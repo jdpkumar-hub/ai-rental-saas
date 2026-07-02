@@ -25,6 +25,8 @@ type Company = {
   brand_color: string;
   trial_started_at: string | null;
   trial_ends_at: string | null;
+  setup_fee_cents: number;
+  setup_fee_paid_at: string | null;  
   created_at: string;
 };
 
@@ -568,7 +570,37 @@ function CompanyDetail({
             <option value="cancelled">Cancelled</option>
           </select>
         </div>
-
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>
+            Setup fee ($) {company.setup_fee_paid_at ? "— already paid" : ""}
+          </label>
+          <div style={styles.inlineRow}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              defaultValue={(company.setup_fee_cents ?? 0) / 100}
+              disabled={!!company.setup_fee_paid_at}
+              onBlur={(e) => {
+                const dollars = Math.max(0, Math.round(Number(e.target.value) || 0));
+                patchCompany({ setup_fee_cents: dollars * 100 });
+              }}
+              style={styles.input}
+            />
+            <button
+              onClick={() => patchCompany({ setup_fee_cents: 0 })}
+              disabled={!!company.setup_fee_paid_at}
+              style={styles.secondaryButton}
+            >
+              Waive
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--color-ink-muted)", marginTop: 4 }}>
+            {company.setup_fee_paid_at
+              ? "Charged on first checkout. Cannot be changed now."
+              : "Charged once, on this company's first checkout after the trial. Set to 0 (or Waive) to skip. Default $1200."}
+          </div>
+        </div>
         <div style={styles.detailField}>
           <label style={styles.detailLabel}>Logo</label>
           <div style={styles.inlineRow}>

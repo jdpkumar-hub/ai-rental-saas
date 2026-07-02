@@ -126,6 +126,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const companyId = session.metadata?.company_id;
   const planKey = session.metadata?.plan_key;
   const cycle = session.metadata?.cycle;
+  const setupFeeCharged = session.metadata?.setup_fee_charged === "true";
 
   if (!companyId) {
     console.error("[stripe-webhook] checkout.session.completed missing company_id metadata");
@@ -143,16 +144,21 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     periodEnd = getPeriodEndISO(subscription as Stripe.Subscription);
   }
 
-  await supabaseAdmin
-    .from("companies")
-    .update({
-      stripe_subscription_id: subscriptionId,
-      subscription_plan: planKey ?? undefined,
-      billing_cycle: cycle ?? undefined,
-      subscription_current_period_end: periodEnd,
-      status: "active",
-    })
-    .eq("id", companyId);
+  const update: Record<string, unknown> = {
+    stripe_subscription_id: subscriptionId,
+    subscription_plan: planKey ?? undefined,
+    billing_cycle: cycle ?? undefined,
+    subscription_current_period_end: periodEnd,
+    status: "active",
+  };
+
+  // If the one-time setup fee was included in this checkout, stamp it paid so
+  // it's never charged again on renewals.
+  if (setupFeeCharged) {
+    update.setup_fee_paid_at = new Date().toISOString();
+  }
+
+  await supabaseAdmin.from("companies").update(update).eq("id", companyId);
 }
 
 // ----------------------------------------------------------------------------

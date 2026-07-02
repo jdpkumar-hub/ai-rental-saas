@@ -30,6 +30,7 @@ type Props = {
   plans: BillingPlan[];
   trialExpired: boolean;
   trialDaysRemaining: number | null;
+  setupFeeDollars: number;
 };
 
 const CYCLE_LABELS: Record<Cycle, string> = {
@@ -64,7 +65,7 @@ function formatUSD(n: number): string {
   });
 }
 
-export default function BillingClient({ plans, trialExpired, trialDaysRemaining }: Props) {
+export default function BillingClient({ plans, trialExpired, trialDaysRemaining, setupFeeDollars }: Props) {
   const [cycle, setCycle] = useState<Cycle>("monthly");
   const [selectedPlan, setSelectedPlan] = useState<string>(plans[0]?.plan_key ?? "");
   const [loading, setLoading] = useState(false);
@@ -187,6 +188,14 @@ export default function BillingClient({ plans, trialExpired, trialDaysRemaining 
           );
         })}
       </div>
+
+      {setupFeeDollars > 0 && (
+        <div style={styles.setupFee}>
+          <strong>Note:</strong> your first payment includes a one-time onboarding
+          setup fee of <strong>{formatUSD(setupFeeDollars)}</strong>, in addition to
+          your selected plan. This is charged once; renewals are the plan price only.
+        </div>
+      )}
 
       {error && <div style={styles.error}>{error}</div>}
 
@@ -317,6 +326,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "12px 16px",
     marginBottom: 16,
     fontSize: 14,
+  },
+  setupFee: {
+    border: "1px solid var(--color-border)",
+    background: "var(--color-surface)",
+    borderRadius: 10,
+    padding: "12px 16px",
+    marginBottom: 16,
+    fontSize: 13.5,
+    color: "var(--color-ink-muted)",
+    lineHeight: 1.5,
   },
   cta: {
     border: "none",

@@ -10,6 +10,7 @@ const ALLOWED_FIELDS = [
   "logo_url",
   "brand_color",
   "trial_ends_at",
+  "setup_fee_cents",
 ];
 
 const VALID_STATUSES = ["active", "suspended", "cancelled"];
@@ -54,12 +55,22 @@ export async function PATCH(
     );
   }
 
+  if ("setup_fee_cents" in updates) {
+    const cents = updates.setup_fee_cents;
+    if (typeof cents !== "number" || !Number.isInteger(cents) || cents < 0) {
+      return NextResponse.json(
+        { error: "setup_fee_cents must be a whole number of cents (0 or more)." },
+        { status: 400 }
+      );
+    }
+  }
+
   const { data, error } = await supabaseAdmin
     .from("companies")
     .update(updates)
     .eq("id", params.id)
     .select(
-      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at"
+      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at, setup_fee_cents, setup_fee_paid_at"
     )
     .single();
 

@@ -97,7 +97,7 @@ export default async function BillingPage({
 
   const { data: company } = await supabaseAdmin
     .from("companies")
-    .select("company_name, brand_color")
+    .select("company_name, brand_color, setup_fee_cents, setup_fee_paid_at")
     .eq("id", companyId)
     .maybeSingle();
 
@@ -108,6 +108,12 @@ export default async function BillingPage({
   const brandColorDark = darkenHexColor(brandColor, 0.22);
 
   const trial = await getTrialStatus(companyId);
+
+  // Setup fee: only owed if non-zero and not already paid. Shown on the page
+  // so the tenant knows the first charge includes it.
+  const setupFeeCents = Number(company?.setup_fee_cents ?? 0);
+  const setupFeeOwed = setupFeeCents > 0 && !company?.setup_fee_paid_at;
+  const setupFeeDollars = setupFeeOwed ? setupFeeCents / 100 : 0;
 
   return (
     <div
@@ -152,6 +158,7 @@ export default async function BillingPage({
         plans={plans}
         trialExpired={trial.isExpired}
         trialDaysRemaining={trial.isExpired ? null : trial.daysRemaining}
+        setupFeeDollars={setupFeeDollars}
       />
     </div>
   );

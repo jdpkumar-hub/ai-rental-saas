@@ -139,38 +139,28 @@ export async function POST(req: NextRequest) {
 
     // One-time setup fee: charged ONLY on the first checkout (setup_fee_paid_at
     // is null) and ONLY if this company has a non-zero fee (0 == waived). It's
-    // added as a one-time invoice item via subscription_data.add_invoice_items,
-    // so it lands on the FIRST invoice alongside the recurring subscription --
-    // a single combined first charge, then subscription-only on renewals.
+    // added as a top-level one-time invoice item on the Checkout Session, so it
+    // lands on the FIRST invoice alongside the recurring subscription -- a
+    // single combined first charge, then subscription-only on renewals.
+    // NOTE: in the 2026-06-24.dahlia API version, add_invoice_items is a
+    // TOP-LEVEL parameter on checkout.sessions.create -- NOT nested under
+    // subscription_data (that nesting is rejected as an unknown parameter).
     // The amount is dynamic (per company), so we use inline price_data rather
     // than a pre-created Stripe Price.
     const setupFeeCents = Number(company.setup_fee_cents ?? 0);
     const chargeSetupFee = setupFeeCents > 0 && !company.setup_fee_paid_at;
 
-    const subscriptionData: {
-      metadata: Record<string, string>;
-      add_invoice_items?: Array<{ price_data: { currency: string; product_data: { name: string }; unit_amount: number } }>;
-    } = {
-      metadata: {
-        company_id: company.id,
-        plan_key: planRow.plan_key ?? planKey,
-        cycle,
-        // Flag so the webhook knows to stamp setup_fee_paid_at on completion.
-        setup_fee_charged: chargeSetupFee ? "true" : "false",
-      },
-    };
-
-    if (chargeSetupFee) {
-      subscriptionData.add_invoice_items = [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: "One-time onboarding setup fee" },
-            unit_amount: setupFeeCents,
+    const addInvoiceItems = chargeSetupFee
+      ? [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: { name: "One-time onboarding setup fee" },
+              unit_amount: setupFeeCents,
+            },
           },
-        },
-      ];
-    }
+        ]
+      : undefined;
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -178,9 +168,19 @@ export async function POST(req: NextRequest) {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${origin}/billing?status=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/billing?status=canceled`,
+      // One-time setup fee (top-level; only present when owed).
+      ...(addInvoiceItems ? { add_invoice_items: addInvoiceItems } : {}),
       // These flow back to us on the webhook so we know which company +
       // plan + cycle this completed checkout corresponds to.
-      subscription_data: subscriptionData,
+      subscription_data: {
+        metadata: {
+          company_id: company.id,
+          plan_key: planRow.plan_key ?? planKey,
+          cycle,
+          // Flag so the webhook knows to stamp setup_fee_paid_at on completion.
+          setup_fee_charged: chargeSetupFee ? "true" : "false",
+        },
+      },
       metadata: {
         company_id: company.id,
         plan_key: planRow.plan_key ?? planKey,

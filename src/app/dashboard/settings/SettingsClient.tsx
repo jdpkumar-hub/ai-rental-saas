@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SessionPayload } from "@/lib/session";
+import type { BillingStatus } from "@/lib/billingStatus";
 import ManageSubscriptionButton from "./ManageSubscriptionButton";
 
 type Branding = {
@@ -19,7 +20,13 @@ const PRESET_COLORS = [
   { name: "Charcoal", value: "#33312E" },
 ];
 
-export default function SettingsClient({ session }: { session: SessionPayload }) {
+export default function SettingsClient({
+  session,
+  billingStatus,
+}: {
+  session: SessionPayload;
+  billingStatus: BillingStatus;
+}) {
   const router = useRouter();
   const [branding, setBranding] = useState<Branding | null>(null);
   const [logoUrl, setLogoUrl] = useState("");
@@ -262,6 +269,38 @@ export default function SettingsClient({ session }: { session: SessionPayload })
             to admin/manager by the server component. */}
         <div style={styles.billingCard}>
           <div style={styles.billingTitle}>Billing</div>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 12,
+              fontSize: 14,
+              fontWeight: 600,
+              color:
+                billingStatus.tone === "good"
+                  ? "var(--color-moss)"
+                  : billingStatus.tone === "warn"
+                  ? "#B8860B"
+                  : "var(--color-danger)",
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background:
+                  billingStatus.tone === "good"
+                    ? "var(--color-moss)"
+                    : billingStatus.tone === "warn"
+                    ? "#B8860B"
+                    : "var(--color-danger)",
+              }}
+            />
+            {billingStatus.label}
+          </div>
           <p style={styles.billingText}>
             Update your payment method, change your plan, view invoices, or cancel
             your subscription. This opens a secure billing portal managed by Stripe.

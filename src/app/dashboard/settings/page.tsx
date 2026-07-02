@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { getBillingStatus } from "@/lib/billingStatus";
 import SettingsClient from "./SettingsClient";
 
 export default async function SettingsPage() {
@@ -13,5 +14,7 @@ export default async function SettingsPage() {
     redirect("/dashboard");
   }
 
-  return <SettingsClient session={session} />;
+  const billingStatus = await getBillingStatus(session.companyId);
+
+  return <SettingsClient session={session} billingStatus={billingStatus} />;
 }

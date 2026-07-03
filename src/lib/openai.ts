@@ -76,6 +76,12 @@ export async function transcribeAudio(
 // Sends the full conversation history + system prompt to GPT, asking for
 // structured JSON back (see leadExtraction.ts for the exact shape and the
 // reasoning behind it).
+//
+// temperature 0.7 (was 0.4): the higher setting produces more varied,
+// natural spoken phrasing — the system prompt's rules keep the JSON shape
+// and extraction behavior on rails, so the extra creativity goes into HOW
+// the assistant says things, not WHAT it extracts. If you ever see flaky
+// extraction, drop this back toward 0.5.
 // ----------------------------------------------------------------------------
 export type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -110,7 +116,7 @@ export async function runConversationTurn(
       model: "gpt-4o-mini",
       messages,
       response_format: { type: "json_object" },
-      temperature: 0.4,
+      temperature: 0.7,
     }),
   });
 

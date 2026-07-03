@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { transcribeAudio, runConversationTurn, ChatMessage } from "@/lib/openai";
+import { runConversationTurn, ChatMessage } from "@/lib/openai";
 import { buildSpeakAndRecordTwiml, buildClosingTwiml, buildErrorTwiml } from "@/lib/twiml";
 import { LeadFields, isLeadComplete } from "@/lib/leadExtraction";
 import { recomputeAndSaveLeaseProbability } from "@/lib/leaseScore";
@@ -8,27 +8,28 @@ import { recomputeAndSaveLeaseProbability } from "@/lib/leaseScore";
 // ----------------------------------------------------------------------------
 // POST /api/voice/turn
 //
-// This is the loop your Phase 2 spec describes:
-//   Record -> Whisper -> GPT -> Next Question -> Record -> ... -> Lead Complete
+// LATENCY REDESIGN: this route used to receive a RecordingUrl, download
+// the audio from Twilio, and run it through Whisper — 4-6 seconds of
+// per-turn overhead ON TOP of GPT, which callers heard as dead air.
 //
-// Twilio calls this URL every time a <Record> finishes (caller stopped
-// talking, or hit the max length). We:
-//   1. Find the call by CallSid (passed as a query param from the previous
-//      turn's action URL — see voice/incoming and the recursive action URL
-//      built below).
-//   2. Transcribe the recording Twilio just captured (via Whisper).
-//   3. Append the caller's transcribed message to the conversation history.
-//   4. Send the whole conversation to GPT, which returns: any newly
-//      extracted lead fields, what to say next, and whether the lead is
-//      now complete.
-//   5. Merge extracted fields into a `leads` row (create one if this is
-//      the first turn that extracted anything).
-//   6. If the lead is complete, speak the closing message and hang up.
-//      Otherwise, speak the next question and record again.
+// Now the TwiML uses <Gather input="speech">, so Twilio transcribes the
+// caller IN REAL TIME while they talk and POSTs us the finished text as
+// `SpeechResult`. This route's only remaining latency is the GPT call
+// (~1-2s) plus DB writes.
 //
-// Every step is wrapped to fail gracefully — a caller should never just
-// hear dead air or get disconnected without explanation if something
-// breaks on our end mid-call.
+// The loop is now:
+//   Gather(speech) -> SpeechResult text -> GPT -> Next Question -> Gather -> ...
+//   -> Lead Complete
+//
+// Per-turn AUDIO no longer exists (turns are text-only); the whole-call
+// recording from voice/incoming is unaffected and still powers "Play
+// full call" on the dashboard. Per-turn transcripts are unchanged.
+//
+// duration_seconds is now derived from the call row's created_at (wall
+// clock since the call started) instead of summing recording lengths —
+// with no per-turn recordings there's nothing to sum, and wall-clock is
+// closer to the truth anyway (the old sum ignored time spent listening
+// to the agent).
 // ----------------------------------------------------------------------------
 export async function POST(request: NextRequest) {
   const url = new URL(request.url);
@@ -52,12 +53,14 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const recordingUrl = formData.get("RecordingUrl")?.toString();
+  // Twilio's real-time speech recognition result for this turn.
+  const speechResult = formData.get("SpeechResult")?.toString()?.trim();
 
-  // 1. Load the call record (gives us company_id, conversation so far)
+  // 1. Load the call record (gives us company_id, conversation so far).
+  //    created_at is used for wall-clock call duration (see header note).
   const { data: call, error: callError } = await supabaseAdmin
     .from("calls")
-    .select("id, company_id, conversation, status, duration_seconds")
+    .select("id, company_id, conversation, status, created_at")
     .eq("call_sid", callSid)
     .single();
 
@@ -77,15 +80,15 @@ export async function POST(request: NextRequest) {
     .single();
 
   const voice = settings?.voice ?? "alloy";
+  const baseUrl = url.origin;
+  const turnActionUrl = `${baseUrl}/api/voice/turn?callSid=${encodeURIComponent(callSid)}`;
 
-  if (!recordingUrl) {
-    // Caller didn't say anything intelligible / recording failed.
-    // Ask them to repeat, using the same action URL so the loop continues.
-    const baseUrl = url.origin;
-    const turnActionUrl = `${baseUrl}/api/voice/turn?callSid=${encodeURIComponent(callSid)}`;
+  if (!speechResult) {
+    // Twilio couldn't make out anything intelligible. Ask them to repeat,
+    // using the same action URL so the loop continues.
     return new NextResponse(
       buildSpeakAndRecordTwiml({
-        message: "Sorry, I didn't catch that. Could you say that again?",
+        message: "Sorry, I didn't quite catch that — could you say that one more time?",
         voice,
         actionUrl: turnActionUrl,
       }),
@@ -94,29 +97,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // 2. Transcribe the caller's recording via Whisper
-    const transcript = await transcribeAudio(
-      recordingUrl,
-      process.env.TWILIO_ACCOUNT_SID!,
-      process.env.TWILIO_AUTH_TOKEN!
-    );
-
-    const recordingDuration = formData.get("RecordingDuration")?.toString();
-
-    // 3. Append to conversation history. We attach the recording URL to
-    // this specific user turn (not just the call as a whole) so the
-    // Phase 3 dashboard can let you play back each individual answer,
-    // not just one recording for the entire call.
+    // 2. Append the caller's transcribed message to the conversation.
     const conversation: ChatMessage[] = [
       ...(call.conversation as ChatMessage[]),
-      {
-        role: "user",
-        content: transcript,
-        recording_url: recordingUrl,
-      } as ChatMessage,
+      { role: "user", content: speechResult },
     ];
 
-    // 4. Run the GPT turn: extract fields + decide next message
+    // 3. Run the GPT turn: extract fields + decide next message
     const result = await runConversationTurn(conversation);
 
     const updatedConversation: ChatMessage[] = [
@@ -124,7 +111,7 @@ export async function POST(request: NextRequest) {
       { role: "assistant", content: result.next_message },
     ];
 
-    // 5. Merge extracted fields into a leads row
+    // 4. Merge extracted fields into a leads row
     const { data: existingLead } = await supabaseAdmin
       .from("leads")
       .select("id, name, phone, budget, move_in_date, apartment_size")
@@ -162,43 +149,38 @@ export async function POST(request: NextRequest) {
     }
 
     // Recompute the lease probability score now that this lead's fields
-    // may have changed. We do this on every turn (not just at the end of
-    // the call) so the score is always current even if a caller hangs up
-    // mid-conversation — see src/lib/leaseScore.ts for the scoring logic.
+    // may have changed — every turn, so the score is current even if the
+    // caller hangs up mid-conversation.
     if (leadId) {
       await recomputeAndSaveLeaseProbability(supabaseAdmin, leadId);
     }
 
+    // Wall-clock call duration since the call row was created.
+    const durationSeconds = call.created_at
+      ? Math.max(
+          0,
+          Math.floor((Date.now() - new Date(call.created_at).getTime()) / 1000)
+        )
+      : null;
+
     // Update the call record with the new conversation state.
-    // recording_url stores the MOST RECENT turn's recording as a quick
-    // "play the last thing they said" shortcut; the full per-turn
-    // recordings live inside `conversation` (see above) for the
-    // Phase 3 dashboard's per-turn playback.
     //
     // caller_name / caller_phone are a SNAPSHOT, written every turn from
-    // whatever's currently known — independent of the linked lead. If
-    // that lead is later edited or deleted (a supported Phase 5 action),
-    // Call History keeps showing what the caller actually said on this
-    // call, since that's a historical fact about the call itself, not
-    // something that should disappear just because the CRM record did.
-    const previousDuration = call.duration_seconds ?? 0;
-    const thisTurnDuration = recordingDuration ? parseInt(recordingDuration, 10) : 0;
-
+    // whatever's currently known — independent of the linked lead, so
+    // Call History keeps showing what the caller actually said even if
+    // the CRM lead is later edited or deleted.
     await supabaseAdmin
       .from("calls")
       .update({
         conversation: updatedConversation,
         lead_id: leadId ?? null,
-        recording_url: recordingUrl,
-        duration_seconds: previousDuration + thisTurnDuration,
+        ...(durationSeconds !== null ? { duration_seconds: durationSeconds } : {}),
         caller_name: mergedFields.name,
         caller_phone: mergedFields.phone,
       })
       .eq("id", call.id);
 
-    const baseUrl = url.origin;
-
-    // 6. Lead complete (per GPT, confirmed against our own field check too,
+    // 5. Lead complete (per GPT, confirmed against our own field check too,
     // since we don't want to trust the model's judgment alone) -> close out.
     if (result.lead_complete && isLeadComplete(mergedFields)) {
       await supabaseAdmin
@@ -216,9 +198,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Otherwise: keep the loop going — speak the next question, record again.
-    const turnActionUrl = `${baseUrl}/api/voice/turn?callSid=${encodeURIComponent(callSid)}`;
-
+    // Otherwise: keep the loop going — speak the next question while
+    // already listening for the caller's reply (barge-in enabled).
     return new NextResponse(
       buildSpeakAndRecordTwiml({
         message: result.next_message,

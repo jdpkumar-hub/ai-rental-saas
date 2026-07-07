@@ -41,9 +41,33 @@ export async function POST() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const results: Array<{ plan_key: string; status: string; error?: string }> = [];
+  const results: Array<{
+    plan_key: string;
+    status: string;
+    error?: string;
+    warning?: string;
+  }> = [];
 
   for (const plan of plans ?? []) {
+    // Safety net: quarterly/yearly are normally derived from monthly
+    // (15% / 30% off — auto-filled in the admin UI). Deliberate
+    // overrides are allowed, but a LARGE deviation usually means a
+    // stale value (e.g. monthly was changed and the others weren't).
+    // We still sync — this is a warning, not a block.
+    let warning: string | undefined;
+    const expectedQuarterly = Math.round(plan.monthly_fee * 3 * 0.85);
+    const expectedYearly = Math.round(plan.monthly_fee * 12 * 0.7);
+    const drift = (actual: number, expected: number) =>
+      expected > 0 && Math.abs(actual - expected) / expected > 0.05;
+
+    if (drift(plan.quarterly_fee, expectedQuarterly) || drift(plan.yearly_fee, expectedYearly)) {
+      warning =
+        `Prices deviate >5% from the 15%/30% pattern ` +
+        `(expected quarterly ~$${expectedQuarterly}, yearly ~$${expectedYearly}; ` +
+        `stored quarterly $${plan.quarterly_fee}, yearly $${plan.yearly_fee}). ` +
+        `Synced anyway — verify this is intentional.`;
+    }
+
     try {
       let productId: string = plan.stripe_product_id;
 
@@ -90,10 +114,10 @@ export async function POST() {
         })
         .eq("id", plan.id);
 
-      results.push({ plan_key: plan.plan_key, status: "synced" });
+      results.push({ plan_key: plan.plan_key, status: "synced", warning });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      results.push({ plan_key: plan.plan_key, status: "failed", error: message });
+      results.push({ plan_key: plan.plan_key, status: "failed", error: message, warning });
     }
   }
 

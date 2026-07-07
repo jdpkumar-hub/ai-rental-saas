@@ -27,6 +27,8 @@ type Company = {
   trial_ends_at: string | null;
   setup_fee_cents: number;
   setup_fee_paid_at: string | null;  
+  call_limit: number | null;
+  overage_price_cents: number;
   created_at: string;
 };
 
@@ -598,7 +600,59 @@ function CompanyDetail({
           <div style={{ fontSize: 12, color: "var(--color-ink-muted)", marginTop: 4 }}>
             {company.setup_fee_paid_at
               ? "Charged on first checkout. Cannot be changed now."
-              : "Charged once, on this company's first checkout after the trial. Set to 0 (or Waive) to skip. Default $1200."}
+              : "Charged once, on this company's first checkout after the trial. Set to 0 (or Waive) to skip. Default $999."}
+          </div>
+        </div>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>Monthly call limit</label>
+          <div style={styles.inlineRow}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              defaultValue={company.call_limit ?? ""}
+              placeholder="Unlimited"
+              onBlur={(e) => {
+                const raw = e.target.value.trim();
+                if (raw === "") {
+                  patchCompany({ call_limit: null });
+                } else {
+                  patchCompany({
+                    call_limit: Math.max(0, Math.round(Number(raw) || 0)),
+                  });
+                }
+              }}
+              style={styles.input}
+            />
+            <button
+              onClick={() => patchCompany({ call_limit: null })}
+              style={styles.secondaryButton}
+            >
+              Unlimited
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--color-ink-muted)", marginTop: 4 }}>
+            Included calls per calendar month. Leave blank (or click Unlimited) for
+            no cap. Calls beyond the limit are still answered, but billed per call.
+          </div>
+        </div>
+        <div style={styles.detailField}>
+          <label style={styles.detailLabel}>Overage price per call ($)</label>
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            defaultValue={((company.overage_price_cents ?? 99) / 100).toFixed(2)}
+            onBlur={(e) => {
+              const dollars = Math.max(0, Number(e.target.value) || 0);
+              patchCompany({ overage_price_cents: Math.round(dollars * 100) });
+            }}
+            style={styles.input}
+          />
+          <div style={{ fontSize: 12, color: "var(--color-ink-muted)", marginTop: 4 }}>
+            Charged for each call beyond the monthly limit — added automatically to
+            the company&apos;s next Stripe invoice. Default $0.99. Set to 0 to
+            track overages without billing them.
           </div>
         </div>
         <div style={styles.detailField}>
@@ -1497,6 +1551,20 @@ function PricingPlanCard({
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Auto-derive quarterly (15% off) and yearly (30% off) whenever the
+  // monthly fee is typed — this is what keeps the three cycles in sync
+  // and prevents the "changed monthly, forgot the other two" bug. Both
+  // derived fields stay directly editable afterwards, so you can still
+  // override to a marketing-clean number (e.g. 2499 instead of 2512).
+  function handleMonthlyChange(v: string) {
+    setMonthlyFee(v);
+    const m = parseInt(v, 10);
+    if (!isNaN(m) && m > 0) {
+      setQuarterlyFee(String(Math.round(m * 3 * 0.85)));
+      setYearlyFee(String(Math.round(m * 12 * 0.7)));
+    }
+  }
+
   async function handleSave() {
     setSaving(true);
     setMsg(null);
@@ -1551,15 +1619,15 @@ function PricingPlanCard({
         </div>
         <div style={styles.formGrid}>
           <FormField label="Setup fee ($, one-time)" value={setupFee} onChange={setSetupFee} type="number" />
-          <FormField label="Monthly fee ($)" value={monthlyFee} onChange={setMonthlyFee} type="number" />
+          <FormField label="Monthly fee ($)" value={monthlyFee} onChange={handleMonthlyChange} type="number" />
           <FormField
-            label="Quarterly fee ($, total per 3mo)"
+            label="Quarterly fee ($, auto: 15% off — editable)"
             value={quarterlyFee}
             onChange={setQuarterlyFee}
             type="number"
           />
           <FormField
-            label="Yearly fee ($, total per 12mo)"
+            label="Yearly fee ($, auto: 30% off — editable)"
             value={yearlyFee}
             onChange={setYearlyFee}
             type="number"

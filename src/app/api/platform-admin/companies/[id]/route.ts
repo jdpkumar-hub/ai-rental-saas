@@ -11,6 +11,8 @@ const ALLOWED_FIELDS = [
   "brand_color",
   "trial_ends_at",
   "setup_fee_cents",
+  "call_limit",
+  "overage_price_cents",
 ];
 
 const VALID_STATUSES = ["active", "suspended", "cancelled"];
@@ -65,12 +67,33 @@ export async function PATCH(
     }
   }
 
+  // call_limit: null means UNLIMITED; otherwise a non-negative integer.
+  if ("call_limit" in updates && updates.call_limit !== null) {
+    const limit = updates.call_limit;
+    if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 0) {
+      return NextResponse.json(
+        { error: "call_limit must be null (unlimited) or a whole number of calls (0 or more)." },
+        { status: 400 }
+      );
+    }
+  }
+
+  if ("overage_price_cents" in updates) {
+    const cents = updates.overage_price_cents;
+    if (typeof cents !== "number" || !Number.isInteger(cents) || cents < 0) {
+      return NextResponse.json(
+        { error: "overage_price_cents must be a whole number of cents (0 or more)." },
+        { status: 400 }
+      );
+    }
+  }
+
   const { data, error } = await supabaseAdmin
     .from("companies")
     .update(updates)
     .eq("id", params.id)
     .select(
-      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at, setup_fee_cents, setup_fee_paid_at"
+      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at, setup_fee_cents, setup_fee_paid_at, call_limit, overage_price_cents"
     )
     .single();
 

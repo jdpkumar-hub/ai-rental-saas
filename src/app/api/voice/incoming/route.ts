@@ -1,30 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildGreetingTwiml, buildErrorTwiml } from "@/lib/twiml";
+import { countCallsThisMonth, isOverageCall } from "@/lib/callUsage";
 
 // ----------------------------------------------------------------------------
 // POST /api/voice/incoming
 //
-// This is the very first webhook Twilio hits when someone calls one of your
-// companies' numbers. Point each company's Twilio number's "A Call Comes In"
-// webhook at:
+// First webhook Twilio hits when someone calls a company's number.
+// Flow: identify company by the called number -> load settings -> create
+// the `calls` row (now including the monthly-cap overage flag) -> respond
+// with TwiML that speaks the greeting and opens the mic.
 //
-//   https://your-deployment.vercel.app/api/voice/incoming
+// CALL CAP (new): before inserting the call row we count this company's
+// calls so far this calendar month. If the company has a call_limit and
+// this call is beyond it, the call is flagged is_overage=true — the call
+// is STILL ANSWERED normally (soft cap); billing of the $0.99 overage
+// happens when the call ends, in /api/voice/recording-complete.
 //
-// Flow:
-//   1. Twilio tells us which number was called (the `To` field) and gives
-//      us a unique CallSid for this call.
-//   2. We look up which company owns that Twilio number — this is the
-//      entire tenancy mechanism for phone calls, there's no login involved.
-//   3. We create a `calls` row to track this call's state across turns.
-//   4. We respond with TwiML that speaks the company's custom greeting and
-//      starts recording the caller's first response.
-//
-// IMPORTANT: this route is intentionally NOT behind the session/auth system
-// from Phase 1 — Twilio is calling it directly, there's no logged-in user.
-// The "auth" here is effectively "you must be calling a real Twilio number
-// that's registered to a real company," which Twilio itself guarantees by
-// only ever calling this URL for numbers you've configured.
+// This route is intentionally NOT behind the session/auth system —
+// Twilio calls it directly; "auth" is that the called number must be a
+// registered, active company number.
 // ----------------------------------------------------------------------------
 export async function POST(request: NextRequest) {
   let formData: FormData;
@@ -52,11 +47,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 1. Look up which company owns this Twilio number, via the
-  // twilio_numbers table — this is what enables multiple numbers per
-  // company. Every number for a company shares the same greeting/config
-  // (company_settings), so once we know the company_id, the rest of
-  // this route is unchanged from before multi-number support.
+  // 1. Which company owns this Twilio number?
   const { data: numberRow, error: numberError } = await supabaseAdmin
     .from("twilio_numbers")
     .select("company_id")
@@ -82,7 +73,7 @@ export async function POST(request: NextRequest) {
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id, company_name, status")
+    .select("id, company_name, status, call_limit")
     .eq("id", numberRow.company_id)
     .maybeSingle();
 
@@ -102,7 +93,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 2. Pull this company's settings (greeting + voice)
+  // 2. Company settings (greeting + voice)
   const { data: settings, error: settingsError } = await supabaseAdmin
     .from("company_settings")
     .select("greeting, voice")
@@ -117,9 +108,14 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 3. Create the call record. The conversation array starts with the
-  // system prompt + the greeting as the assistant's first message — this
-  // becomes the GPT context that grows with every turn.
+  // 3. Monthly call-cap check. Soft cap: the call is always answered;
+  //    beyond-cap calls are just flagged so recording-complete can bill
+  //    the per-call overage when the call ends.
+  const callsSoFar = await countCallsThisMonth(supabaseAdmin, company.id);
+  const isOverage = isOverageCall(callsSoFar, company.call_limit ?? null);
+
+  // 4. Create the call record with the system prompt + greeting as the
+  //    starting GPT context.
   const systemPrompt = (await import("@/lib/leadExtraction")).buildSystemPrompt(
     company.company_name,
     settings.greeting
@@ -137,6 +133,7 @@ export async function POST(request: NextRequest) {
     to_number: toNumber,
     status: "in_progress",
     conversation: initialConversation,
+    is_overage: isOverage,
   });
 
   if (insertError) {
@@ -147,9 +144,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 4. Respond with TwiML: start the whole-call recording, speak the
-  // greeting, then record the caller's first response and POST it to
-  // /api/voice/turn.
+  // 5. Respond: start whole-call recording, speak greeting, open the mic.
   const baseUrl = new URL(request.url).origin;
   const turnActionUrl = `${baseUrl}/api/voice/turn?callSid=${encodeURIComponent(callSid)}`;
   const recordingStatusCallbackUrl = `${baseUrl}/api/voice/recording-complete?callSid=${encodeURIComponent(

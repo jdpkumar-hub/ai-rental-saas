@@ -1,26 +1,23 @@
 // ----------------------------------------------------------------------------
 // TwiML (Twilio Markup Language) response builders.
 //
-// LATENCY REDESIGN: previously each turn used <Record> -> upload -> we
-// download the audio -> Whisper -> GPT, which produced 7-10 seconds of
-// dead air per turn (callers thought the line dropped). Now each turn
-// uses <Gather input="speech">: Twilio transcribes the caller IN REAL
-// TIME while they speak and POSTs us the text directly (SpeechResult).
-// No recording upload, no download, no Whisper call, and end-of-speech
-// detection fires in ~1s (speechTimeout="auto") instead of a fixed 3s.
+// Speech input uses <Gather input="speech">: Twilio transcribes the
+// caller IN REAL TIME while they speak and POSTs the text (SpeechResult)
+// to the turn route. No recording upload/download, no Whisper call.
 //
-// Bonus: the <Say> lives INSIDE the <Gather>, which enables BARGE-IN —
-// the caller can start answering while the agent is still talking, and
-// Twilio cuts the speech and captures them, like a real conversation.
+// FIXES in this revision:
+//   1. GREETING IS NO LONGER INTERRUPTIBLE. Previously the greeting <Say>
+//      sat inside <Gather>, so any pickup noise or a caller's reflexive
+//      "hello?" cancelled the greeting mid-word — it sounded like the
+//      greeting never played. The greeting now plays in full, THEN
+//      listening starts. Mid-call turns keep barge-in (interrupting a
+//      question is natural; interrupting the greeting is an accident).
+//   2. speechTimeout is an explicit "2" (seconds) instead of "auto".
+//      "auto" is unreliable with some speech models and could cause
+//      Twilio to hear nothing at all — the caller talks, Twilio detects
+//      no speech, and the call walks itself to "Goodbye" and hangs up.
 //
-// Tradeoff (deliberate): per-turn audio recordings no longer exist —
-// turns are text-only. The WHOLE-CALL recording is unaffected (that's
-// the separate <Start><Recording> in the greeting) and per-turn
-// transcripts still work. Reverting = restore the old twiml.ts + turn
-// route; the exported function names/signatures here are unchanged.
-//
-// VOICE: Amazon Polly GENERATIVE voices — Amazon's newest, most human
-// tier. Drop-in TwiML string change, zero extra latency.
+// VOICE: Amazon Polly GENERATIVE voices — most human tier, drop-in.
 // ----------------------------------------------------------------------------
 
 function escapeXml(text: string): string {
@@ -32,10 +29,6 @@ function escapeXml(text: string): string {
     .replace(/'/g, "&apos;");
 }
 
-// Maps the simple voice names stored in company_settings.voice to actual
-// Twilio/Polly voice identifiers. Existing keys preserved (no DB change
-// needed). If a Generative voice ever misbehaves, swap "-Generative"
-// back to "-Neural" here.
 const VOICE_MAP: Record<string, string> = {
   alloy: "Polly.Joanna-Generative",
   joanna: "Polly.Joanna-Generative",
@@ -50,33 +43,43 @@ function resolveVoice(voiceSetting: string): string {
   return VOICE_MAP[voiceSetting.toLowerCase()] ?? "Polly.Joanna-Generative";
 }
 
-// Shared <Gather> block: speaks `message` and listens for the caller's
-// reply at the same time (barge-in). When the caller finishes, Twilio
-// POSTs SpeechResult (the transcribed text) to actionUrl.
-//
-// - speechTimeout="auto": Twilio decides the caller is done ~1s after
-//   they stop, instead of a fixed 3s wait.
-// - speechModel="experimental_conversations": Twilio's model tuned for
-//   free-form conversational speech (vs short commands).
-// - timeout="5": how long to wait for the caller to START talking at all
-//   before falling through to the silence-recovery verbs below.
-function gatherBlock(
+// Shared <Gather> attributes.
+// - speechTimeout="2": caller is considered done 2s after they stop
+//   talking. Explicit value — do NOT use "auto" (unreliable with the
+//   experimental_conversations model; can result in no speech detected).
+// - timeout="6": how long to wait for the caller to START talking before
+//   falling through to the silence-recovery verbs.
+// - speechModel="experimental_conversations": tuned for free-form
+//   conversational speech. If recognition is ever poor (especially on
+//   phone numbers), switch to speechModel="phone_call" enhanced="true".
+function gatherAttrs(actionUrl: string): string {
+  return `input="speech" action="${escapeXml(
+    actionUrl
+  )}" method="POST" speechTimeout="2" speechModel="experimental_conversations" language="en-US" timeout="6"`;
+}
+
+// A gather that speaks `message` WHILE listening — the caller can barge
+// in and interrupt. Used for mid-call turns.
+function gatherWithPrompt(
   pollyVoice: string,
   message: string,
   actionUrl: string
 ): string {
-  return `<Gather input="speech" action="${escapeXml(
-    actionUrl
-  )}" method="POST" speechTimeout="auto" speechModel="experimental_conversations" language="en-US" timeout="5">
+  return `<Gather ${gatherAttrs(actionUrl)}>
     <Say voice="${pollyVoice}">${escapeXml(message)}</Say>
   </Gather>`;
 }
 
-// Silence recovery: if the first <Gather> falls through (caller never
-// started talking), check in on them and give one more chance before a
-// polite goodbye — never an abrupt hangup.
+// A gather that ONLY listens (no nested prompt). Used after an
+// uninterruptible <Say> — e.g. the greeting.
+function gatherListenOnly(actionUrl: string): string {
+  return `<Gather ${gatherAttrs(actionUrl)}/>`;
+}
+
+// Silence recovery: if a gather falls through (caller never started
+// talking), check in and give one more chance before a polite goodbye.
 function silenceRecoveryXml(pollyVoice: string, actionUrl: string): string {
-  return `  ${gatherBlock(pollyVoice, "Are you still there?", actionUrl)}
+  return `  ${gatherWithPrompt(pollyVoice, "Are you still there?", actionUrl)}
   <Say voice="${pollyVoice}">It sounds like now might not be a good time. Feel free to call us back anytime. Goodbye!</Say>
   <Hangup/>`;
 }
@@ -84,10 +87,9 @@ function silenceRecoveryXml(pollyVoice: string, actionUrl: string): string {
 // ----------------------------------------------------------------------------
 // buildSpeakAndRecordTwiml
 //
-// (Name kept for drop-in compatibility with the route files, even though
-// it now gathers speech rather than recording audio.) The core loop step:
-// say something while listening, then POST the transcribed reply to
-// actionUrl.
+// (Name kept for drop-in compatibility.) Mid-call turn: speak the next
+// message while listening (barge-in enabled), then POST the transcribed
+// reply to actionUrl.
 // ----------------------------------------------------------------------------
 export function buildSpeakAndRecordTwiml({
   message,
@@ -102,7 +104,7 @@ export function buildSpeakAndRecordTwiml({
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  ${gatherBlock(pollyVoice, message, actionUrl)}
+  ${gatherWithPrompt(pollyVoice, message, actionUrl)}
 ${silenceRecoveryXml(pollyVoice, actionUrl)}
 </Response>`;
 }
@@ -110,8 +112,9 @@ ${silenceRecoveryXml(pollyVoice, actionUrl)}
 // ----------------------------------------------------------------------------
 // buildClosingTwiml
 //
-// Used once the lead is complete (or the call needs to end for any other
-// reason) — speaks a final message, then hangs up.
+// Used once the lead is complete — speaks the final message in full
+// (uninterruptible), pauses a beat so the hangup doesn't feel like the
+// agent slammed the phone down, then ends the call.
 // ----------------------------------------------------------------------------
 export function buildClosingTwiml({
   message,
@@ -125,16 +128,13 @@ export function buildClosingTwiml({
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="${pollyVoice}">${escapeXml(message)}</Say>
+  <Pause length="1"/>
   <Hangup/>
 </Response>`;
 }
 
 // ----------------------------------------------------------------------------
 // buildErrorTwiml
-//
-// Fallback for when something on our end breaks mid-call (OpenAI down,
-// database error, etc). We never want a caller to just hear silence or a
-// dead line — always say SOMETHING graceful before hanging up.
 // ----------------------------------------------------------------------------
 export function buildErrorTwiml(voice: string = "alloy"): string {
   const pollyVoice = resolveVoice(voice);
@@ -149,10 +149,9 @@ export function buildErrorTwiml(voice: string = "alloy"): string {
 // ----------------------------------------------------------------------------
 // buildGreetingTwiml
 //
-// The very first response on an incoming call: starts the whole-call
-// recording in the background (unchanged — this still powers "Play full
-// call" on the dashboard), then speaks the greeting while already
-// listening for the caller's first reply.
+// First response on an incoming call: start the whole-call recording,
+// speak the company greeting IN FULL (not interruptible — pickup noise
+// or a reflexive "hello?" must not cancel it), then open the mic.
 // ----------------------------------------------------------------------------
 export function buildGreetingTwiml({
   greeting,
@@ -175,7 +174,8 @@ export function buildGreetingTwiml({
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   ${recordingStart}
-  ${gatherBlock(pollyVoice, greeting, turnActionUrl)}
+  <Say voice="${pollyVoice}">${escapeXml(greeting)}</Say>
+  ${gatherListenOnly(turnActionUrl)}
 ${silenceRecoveryXml(pollyVoice, turnActionUrl)}
 </Response>`;
 }

@@ -166,3 +166,47 @@ export function buildGreetingTwiml({
 ${silenceRecoveryXml(pollyVoice, turnActionUrl)}
 </Response>`;
 }
+// ----------------------------------------------------------------------------
+// buildAckRedirectTwiml  (async turn processing — latency fix)
+//
+// Returned INSTANTLY by the turn webhook while GPT runs in the
+// background: speaks a short human acknowledgment ("Mm-hm.", "Okay.")
+// then redirects to the turn-result endpoint, which waits for the real
+// reply. The caller hears a response ~2s after they stop talking instead
+// of 4+ seconds of dead silence.
+// ----------------------------------------------------------------------------
+export function buildAckRedirectTwiml({
+  ack,
+  voice,
+  redirectUrl,
+}: {
+  ack: string;
+  voice: string;
+  redirectUrl: string;
+}): string {
+  const pollyVoice = resolveVoice(voice);
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="${pollyVoice}">${escapeXml(ack)}</Say>
+  <Redirect method="POST">${escapeXml(redirectUrl)}</Redirect>
+</Response>`;
+}
+
+// ----------------------------------------------------------------------------
+// buildWaitRedirectTwiml
+//
+// Used by turn-result when the background GPT work isn't finished yet:
+// a short pause, then re-check. Bounded by the tries param in the route.
+// ----------------------------------------------------------------------------
+export function buildWaitRedirectTwiml({
+  redirectUrl,
+}: {
+  redirectUrl: string;
+}): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Redirect method="POST">${escapeXml(redirectUrl)}</Redirect>
+</Response>`;
+}

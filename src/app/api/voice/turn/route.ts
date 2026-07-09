@@ -1,36 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { runConversationTurn, ChatMessage } from "@/lib/openai";
-import { buildSpeakAndRecordTwiml, buildClosingTwiml, buildErrorTwiml } from "@/lib/twiml";
+import {
+  buildSpeakAndRecordTwiml,
+  buildAckRedirectTwiml,
+  buildErrorTwiml,
+} from "@/lib/twiml";
 import { LeadFields, isLeadComplete } from "@/lib/leadExtraction";
 import { recomputeAndSaveLeaseProbability } from "@/lib/leaseScore";
 
 // ----------------------------------------------------------------------------
-// POST /api/voice/turn
+// POST /api/voice/turn — ASYNC version (latency fix)
 //
-// LATENCY REDESIGN: this route used to receive a RecordingUrl, download
-// the audio from Twilio, and run it through Whisper — 4-6 seconds of
-// per-turn overhead ON TOP of GPT, which callers heard as dead air.
+// Previously this route did all the work (GPT + DB) BEFORE returning
+// TwiML, so the caller sat in silence for the whole processing time.
+// Now:
+//   1. Receive the caller's transcribed speech (SpeechResult).
+//   2. Kick off the heavy work in the BACKGROUND via waitUntil()
+//      (processTurn below: GPT, lead merge, lease score, call update).
+//      Its result is parked in calls.pending_turn.
+//   3. INSTANTLY return a short spoken acknowledgment ("Mm-hm.") plus a
+//      <Redirect> to /api/voice/turn-result, which picks up the parked
+//      reply — usually ready by the time the ack finishes playing.
 //
-// Now the TwiML uses <Gather input="speech">, so Twilio transcribes the
-// caller IN REAL TIME while they talk and POSTs us the finished text as
-// `SpeechResult`. This route's only remaining latency is the GPT call
-// (~1-2s) plus DB writes.
-//
-// The loop is now:
-//   Gather(speech) -> SpeechResult text -> GPT -> Next Question -> Gather -> ...
-//   -> Lead Complete
-//
-// Per-turn AUDIO no longer exists (turns are text-only); the whole-call
-// recording from voice/incoming is unaffected and still powers "Play
-// full call" on the dashboard. Per-turn transcripts are unchanged.
-//
-// duration_seconds is now derived from the call row's created_at (wall
-// clock since the call started) instead of summing recording lengths —
-// with no per-turn recordings there's nothing to sum, and wall-clock is
-// closer to the truth anyway (the old sum ignored time spent listening
-// to the agent).
+// Requires the @vercel/functions package (npm install @vercel/functions).
 // ----------------------------------------------------------------------------
+
+const ACKS = ["Mm-hm.", "Okay.", "Got it.", "Alright.", "Sure."];
+
 export async function POST(request: NextRequest) {
   const url = new URL(request.url);
   const callSid = url.searchParams.get("callSid");
@@ -53,11 +51,8 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Twilio's real-time speech recognition result for this turn.
   const speechResult = formData.get("SpeechResult")?.toString()?.trim();
 
-  // 1. Load the call record (gives us company_id, conversation so far).
-  //    created_at is used for wall-clock call duration (see header note).
   const { data: call, error: callError } = await supabaseAdmin
     .from("calls")
     .select("id, company_id, conversation, status, created_at")
@@ -72,20 +67,18 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Load company settings (voice) for TwiML responses
   const { data: settings } = await supabaseAdmin
     .from("company_settings")
     .select("voice")
     .eq("company_id", call.company_id)
     .single();
 
-  const voice = settings?.voice ?? "alloy";
+  const voice = settings?.voice ?? "ruth";
   const baseUrl = url.origin;
   const turnActionUrl = `${baseUrl}/api/voice/turn?callSid=${encodeURIComponent(callSid)}`;
 
   if (!speechResult) {
-    // Twilio couldn't make out anything intelligible. Ask them to repeat,
-    // using the same action URL so the loop continues.
+    // Nothing intelligible — quick re-prompt, no GPT needed.
     return new NextResponse(
       buildSpeakAndRecordTwiml({
         message: "Sorry, I didn't quite catch that — could you say that one more time?",
@@ -96,14 +89,56 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  try {
-    // 2. Append the caller's transcribed message to the conversation.
-    const conversation: ChatMessage[] = [
-      ...(call.conversation as ChatMessage[]),
-      { role: "user", content: speechResult },
-    ];
+  const conversation: ChatMessage[] = [
+    ...(call.conversation as ChatMessage[]),
+    { role: "user", content: speechResult },
+  ];
+  const seq = conversation.length; // token matching this turn's result
 
-    // 3. Run the GPT turn: extract fields + decide next message
+  // Heavy work runs after this response is sent. If waitUntil is
+  // unavailable (e.g. local dev), fall back to fire-and-forget.
+  const work = processTurn({
+    callId: call.id,
+    companyId: call.company_id,
+    createdAt: call.created_at as string | null,
+    conversation,
+    seq,
+  });
+  try {
+    waitUntil(work);
+  } catch {
+    void work.catch((e) => console.error("[voice/turn] background error:", e));
+  }
+
+  const ack = ACKS[seq % ACKS.length];
+  const resultUrl = `${baseUrl}/api/voice/turn-result?callSid=${encodeURIComponent(
+    callSid
+  )}&seq=${seq}&tries=0`;
+
+  return new NextResponse(
+    buildAckRedirectTwiml({ ack, voice, redirectUrl: resultUrl }),
+    { status: 200, headers: { "Content-Type": "text/xml" } }
+  );
+}
+
+// ----------------------------------------------------------------------------
+// processTurn — everything the old synchronous route did, now in the
+// background. Parks its outcome in calls.pending_turn for turn-result.
+// ----------------------------------------------------------------------------
+async function processTurn({
+  callId,
+  companyId,
+  createdAt,
+  conversation,
+  seq,
+}: {
+  callId: string;
+  companyId: string;
+  createdAt: string | null;
+  conversation: ChatMessage[];
+  seq: number;
+}) {
+  try {
     const result = await runConversationTurn(conversation);
 
     const updatedConversation: ChatMessage[] = [
@@ -111,11 +146,10 @@ export async function POST(request: NextRequest) {
       { role: "assistant", content: result.next_message },
     ];
 
-    // 4. Merge extracted fields into a leads row
     const { data: existingLead } = await supabaseAdmin
       .from("leads")
       .select("id, name, phone, budget, move_in_date, apartment_size")
-      .eq("call_id", call.id)
+      .eq("call_id", callId)
       .maybeSingle();
 
     const mergedFields: LeadFields = {
@@ -130,45 +164,29 @@ export async function POST(request: NextRequest) {
     let leadId = existingLead?.id;
 
     if (existingLead) {
-      await supabaseAdmin
-        .from("leads")
-        .update(mergedFields)
-        .eq("id", existingLead.id);
+      await supabaseAdmin.from("leads").update(mergedFields).eq("id", existingLead.id);
     } else {
-      // Only create a lead row once we've actually extracted SOMETHING —
-      // no point creating empty lead rows for calls that go nowhere.
       const hasAnyField = Object.values(result.extracted).some((v) => v);
       if (hasAnyField) {
         const { data: newLead } = await supabaseAdmin
           .from("leads")
-          .insert({ company_id: call.company_id, call_id: call.id, ...mergedFields })
+          .insert({ company_id: companyId, call_id: callId, ...mergedFields })
           .select("id")
           .single();
         leadId = newLead?.id;
       }
     }
 
-    // Recompute the lease probability score now that this lead's fields
-    // may have changed — every turn, so the score is current even if the
-    // caller hangs up mid-conversation.
     if (leadId) {
       await recomputeAndSaveLeaseProbability(supabaseAdmin, leadId);
     }
 
-    // Wall-clock call duration since the call row was created.
-    const durationSeconds = call.created_at
-      ? Math.max(
-          0,
-          Math.floor((Date.now() - new Date(call.created_at).getTime()) / 1000)
-        )
+    const complete = result.lead_complete && isLeadComplete(mergedFields);
+
+    const durationSeconds = createdAt
+      ? Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000))
       : null;
 
-    // Update the call record with the new conversation state.
-    //
-    // caller_name / caller_phone are a SNAPSHOT, written every turn from
-    // whatever's currently known — independent of the linked lead, so
-    // Call History keeps showing what the caller actually said even if
-    // the CRM lead is later edited or deleted.
     await supabaseAdmin
       .from("calls")
       .update({
@@ -177,48 +195,25 @@ export async function POST(request: NextRequest) {
         ...(durationSeconds !== null ? { duration_seconds: durationSeconds } : {}),
         caller_name: mergedFields.name,
         caller_phone: mergedFields.phone,
+        pending_turn: { seq, message: result.next_message, complete, error: false },
+        ...(complete
+          ? { status: "completed", ended_at: new Date().toISOString() }
+          : {}),
       })
-      .eq("id", call.id);
+      .eq("id", callId);
 
-    // 5. Lead complete (per GPT, confirmed against our own field check too,
-    // since we don't want to trust the model's judgment alone) -> close out.
-    if (result.lead_complete && isLeadComplete(mergedFields)) {
-      await supabaseAdmin
-        .from("calls")
-        .update({ status: "completed", ended_at: new Date().toISOString() })
-        .eq("id", call.id);
-
-      if (leadId) {
-        await supabaseAdmin.from("leads").update({ status: "new" }).eq("id", leadId);
-      }
-
-      return new NextResponse(
-        buildClosingTwiml({ message: result.next_message, voice }),
-        { status: 200, headers: { "Content-Type": "text/xml" } }
-      );
+    if (complete && leadId) {
+      await supabaseAdmin.from("leads").update({ status: "new" }).eq("id", leadId);
     }
-
-    // Otherwise: keep the loop going — speak the next question while
-    // already listening for the caller's reply (barge-in enabled).
-    return new NextResponse(
-      buildSpeakAndRecordTwiml({
-        message: result.next_message,
-        voice,
-        actionUrl: turnActionUrl,
-      }),
-      { status: 200, headers: { "Content-Type": "text/xml" } }
-    );
   } catch (error) {
-    console.error("[voice/turn] Error processing turn:", error);
-
+    console.error("[voice/turn] processTurn error:", error);
     await supabaseAdmin
       .from("calls")
-      .update({ status: "failed", ended_at: new Date().toISOString() })
-      .eq("id", call.id);
-
-    return new NextResponse(buildErrorTwiml(voice), {
-      status: 200,
-      headers: { "Content-Type": "text/xml" },
-    });
+      .update({
+        status: "failed",
+        ended_at: new Date().toISOString(),
+        pending_turn: { seq, message: "", complete: false, error: true },
+      })
+      .eq("id", callId);
   }
 }

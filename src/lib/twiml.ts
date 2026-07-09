@@ -2,20 +2,21 @@
 // TwiML (Twilio Markup Language) response builders.
 //
 // Speech input uses <Gather input="speech">: Twilio transcribes the
-// caller IN REAL TIME while they speak and POSTs the text (SpeechResult)
-// to the turn route. No recording upload/download, no Whisper call.
+// caller in real time and POSTs the text (SpeechResult) to the turn
+// route. No recording upload/download, no Whisper call.
 //
-// FIXES in this revision:
-//   1. GREETING IS NO LONGER INTERRUPTIBLE. Previously the greeting <Say>
-//      sat inside <Gather>, so any pickup noise or a caller's reflexive
-//      "hello?" cancelled the greeting mid-word — it sounded like the
-//      greeting never played. The greeting now plays in full, THEN
-//      listening starts. Mid-call turns keep barge-in (interrupting a
-//      question is natural; interrupting the greeting is an accident).
-//   2. speechTimeout is an explicit "2" (seconds) instead of "auto".
-//      "auto" is unreliable with some speech models and could cause
-//      Twilio to hear nothing at all — the caller talks, Twilio detects
-//      no speech, and the call walks itself to "Goodbye" and hangs up.
+// FIXES in this revision (from live-call evidence):
+//   1. BARGE-IN REMOVED EVERYWHERE. Prompts used to play inside <Gather>
+//      so callers could interrupt — but any background noise or breath
+//      cut the agent off mid-word. Callers heard the agent go silent
+//      mid-sentence and said "hello? can you hear me?", which became the
+//      next (garbled) turn, spiraling the conversation. Now EVERY prompt
+//      plays in full via <Say>, and only then does the mic open.
+//   2. speechModel switched experimental_conversations -> "phone_call"
+//      with enhanced="true": Twilio's model tuned for telephone audio.
+//      The old model transcribed a spoken phone number as "Locally" and
+//      background noise as sentences. phone_call+enhanced is materially
+//      better on phone audio and on digits.
 //
 // VOICE: Amazon Polly GENERATIVE voices — most human tier, drop-in.
 // ----------------------------------------------------------------------------
@@ -40,46 +41,35 @@ const VOICE_MAP: Record<string, string> = {
 };
 
 function resolveVoice(voiceSetting: string): string {
-  return VOICE_MAP[voiceSetting.toLowerCase()] ?? "Polly.Joanna-Generative";
+  return VOICE_MAP[voiceSetting.toLowerCase()] ?? "Polly.Ruth-Generative";
 }
 
-// Shared <Gather> attributes.
-// - speechTimeout="2": caller is considered done 2s after they stop
-//   talking. Explicit value — do NOT use "auto" (unreliable with the
-//   experimental_conversations model; can result in no speech detected).
-// - timeout="6": how long to wait for the caller to START talking before
-//   falling through to the silence-recovery verbs.
-// - speechModel="experimental_conversations": tuned for free-form
-//   conversational speech. If recognition is ever poor (especially on
-//   phone numbers), switch to speechModel="phone_call" enhanced="true".
-function gatherAttrs(actionUrl: string): string {
-  return `input="speech" action="${escapeXml(
+// Listen-only <Gather>: opens the mic AFTER a prompt has fully played.
+// - speechTimeout="2": caller is considered done 2s after they stop.
+// - speechModel="phone_call" + enhanced="true": tuned for telephone
+//   audio and digits (phone numbers, budgets).
+// - timeout="6": how long to wait for the caller to START talking
+//   before falling through to the silence-recovery verbs.
+function gatherListen(actionUrl: string): string {
+  return `<Gather input="speech" action="${escapeXml(
     actionUrl
-  )}" method="POST" speechTimeout="2" speechModel="experimental_conversations" language="en-US" timeout="6"`;
+  )}" method="POST" speechTimeout="2" speechModel="phone_call" enhanced="true" language="en-US" timeout="6"/>`;
 }
 
-// A gather that speaks `message` WHILE listening — the caller can barge
-// in and interrupt. Used for mid-call turns.
-function gatherWithPrompt(
+// Speak a prompt IN FULL (uninterruptible), then listen.
+function speakThenListen(
   pollyVoice: string,
   message: string,
   actionUrl: string
 ): string {
-  return `<Gather ${gatherAttrs(actionUrl)}>
-    <Say voice="${pollyVoice}">${escapeXml(message)}</Say>
-  </Gather>`;
-}
-
-// A gather that ONLY listens (no nested prompt). Used after an
-// uninterruptible <Say> — e.g. the greeting.
-function gatherListenOnly(actionUrl: string): string {
-  return `<Gather ${gatherAttrs(actionUrl)}/>`;
+  return `<Say voice="${pollyVoice}">${escapeXml(message)}</Say>
+  ${gatherListen(actionUrl)}`;
 }
 
 // Silence recovery: if a gather falls through (caller never started
 // talking), check in and give one more chance before a polite goodbye.
 function silenceRecoveryXml(pollyVoice: string, actionUrl: string): string {
-  return `  ${gatherWithPrompt(pollyVoice, "Are you still there?", actionUrl)}
+  return `  ${speakThenListen(pollyVoice, "Are you still there?", actionUrl)}
   <Say voice="${pollyVoice}">It sounds like now might not be a good time. Feel free to call us back anytime. Goodbye!</Say>
   <Hangup/>`;
 }
@@ -88,8 +78,8 @@ function silenceRecoveryXml(pollyVoice: string, actionUrl: string): string {
 // buildSpeakAndRecordTwiml
 //
 // (Name kept for drop-in compatibility.) Mid-call turn: speak the next
-// message while listening (barge-in enabled), then POST the transcribed
-// reply to actionUrl.
+// message in full, then open the mic and POST the transcribed reply to
+// actionUrl.
 // ----------------------------------------------------------------------------
 export function buildSpeakAndRecordTwiml({
   message,
@@ -104,7 +94,7 @@ export function buildSpeakAndRecordTwiml({
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  ${gatherWithPrompt(pollyVoice, message, actionUrl)}
+  ${speakThenListen(pollyVoice, message, actionUrl)}
 ${silenceRecoveryXml(pollyVoice, actionUrl)}
 </Response>`;
 }
@@ -112,9 +102,8 @@ ${silenceRecoveryXml(pollyVoice, actionUrl)}
 // ----------------------------------------------------------------------------
 // buildClosingTwiml
 //
-// Used once the lead is complete — speaks the final message in full
-// (uninterruptible), pauses a beat so the hangup doesn't feel like the
-// agent slammed the phone down, then ends the call.
+// Used once the lead is complete — speaks the final message in full,
+// pauses a beat so the hangup doesn't feel abrupt, then ends the call.
 // ----------------------------------------------------------------------------
 export function buildClosingTwiml({
   message,
@@ -136,7 +125,7 @@ export function buildClosingTwiml({
 // ----------------------------------------------------------------------------
 // buildErrorTwiml
 // ----------------------------------------------------------------------------
-export function buildErrorTwiml(voice: string = "alloy"): string {
+export function buildErrorTwiml(voice: string = "ruth"): string {
   const pollyVoice = resolveVoice(voice);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -150,8 +139,7 @@ export function buildErrorTwiml(voice: string = "alloy"): string {
 // buildGreetingTwiml
 //
 // First response on an incoming call: start the whole-call recording,
-// speak the company greeting IN FULL (not interruptible — pickup noise
-// or a reflexive "hello?" must not cancel it), then open the mic.
+// speak the company greeting in full, then open the mic.
 // ----------------------------------------------------------------------------
 export function buildGreetingTwiml({
   greeting,
@@ -174,8 +162,7 @@ export function buildGreetingTwiml({
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   ${recordingStart}
-  <Say voice="${pollyVoice}">${escapeXml(greeting)}</Say>
-  ${gatherListenOnly(turnActionUrl)}
+  ${speakThenListen(pollyVoice, greeting, turnActionUrl)}
 ${silenceRecoveryXml(pollyVoice, turnActionUrl)}
 </Response>`;
 }

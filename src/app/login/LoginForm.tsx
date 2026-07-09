@@ -3,11 +3,17 @@
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
+// ----------------------------------------------------------------------------
+// Company login form, themed by the LIVE landing variant's accent color
+// (passed from page.tsx). The logo mark, button, and background tint all
+// derive from it, so this screen always matches the marketing page a
+// visitor just came from.
+// ----------------------------------------------------------------------------
 export default function LoginForm({
-  backgroundColor,
+  accentColor,
   backgroundImage,
 }: {
-  backgroundColor: string;
+  accentColor: string;
   backgroundImage: string | null;
 }) {
   const router = useRouter();
@@ -49,13 +55,13 @@ export default function LoginForm({
       style={{
         ...styles.page,
         background: backgroundImage
-          ? `url(${backgroundImage}) center/cover no-repeat, ${backgroundColor}`
-          : `radial-gradient(circle at 20% 10%, ${backgroundColor} 0%, var(--color-bg) 45%)`,
+          ? `url(${backgroundImage}) center/cover no-repeat, color-mix(in srgb, ${accentColor} 14%, #FFFFFF)`
+          : `radial-gradient(circle at 20% 10%, color-mix(in srgb, ${accentColor} 22%, #FFFFFF) 0%, var(--color-bg) 55%)`,
       }}
     >
       <div style={styles.card}>
         <div style={styles.brandRow}>
-          <div style={styles.mark}>R</div>
+          <div style={{ ...styles.mark, background: accentColor }}>R</div>
           <div>
             <div style={styles.brandName}>AI Rental Office Assistant</div>
             <div style={styles.brandSub}>Sign in to your company's dashboard</div>
@@ -87,22 +93,14 @@ export default function LoginForm({
 
           {error && <div style={styles.error}>{error}</div>}
 
-          <button type="submit" disabled={loading} style={styles.button}>
+          <button
+            type="submit"
+            disabled={loading}
+            style={{ ...styles.button, background: accentColor }}
+          >
             {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
-
-        <div style={styles.demoBox}>
-          <div style={styles.demoTitle}>Demo tenants</div>
-          <div style={styles.demoRow}>
-            <code style={styles.demoCode}>sterling</code>
-            <span style={styles.demoText}>admin@sterling.com / password123</span>
-          </div>
-          <div style={styles.demoRow}>
-            <code style={styles.demoCode}>lakehurst</code>
-            <span style={styles.demoText}>manager@lakehurst.com / password123</span>
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -166,7 +164,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: 38,
     height: 38,
     borderRadius: 8,
-    background: "var(--color-clay)",
     color: "white",
     fontFamily: "var(--font-display)",
     fontWeight: 700,
@@ -224,7 +221,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   button: {
     marginTop: 4,
-    background: "var(--color-clay)",
     color: "white",
     border: "none",
     borderRadius: "var(--radius)",
@@ -232,38 +228,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 15,
     fontWeight: 600,
     cursor: "pointer",
-  },
-  demoBox: {
-    marginTop: 24,
-    paddingTop: 18,
-    borderTop: "1px solid var(--color-border)",
-  },
-  demoTitle: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: "var(--color-ink-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-    marginBottom: 8,
-  },
-  demoRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    fontSize: 12.5,
-    color: "var(--color-ink-muted)",
-    marginBottom: 4,
-  },
-  demoCode: {
-    fontFamily: "var(--font-mono)",
-    background: "#F2ECE1",
-    border: "1px solid var(--color-border)",
-    borderRadius: 4,
-    padding: "2px 6px",
-    fontSize: 12,
-    color: "var(--color-clay-dark)",
-  },
-  demoText: {
-    fontFamily: "var(--font-mono)",
   },
 };

@@ -4,27 +4,17 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
 // ----------------------------------------------------------------------------
-// PlatformLoginForm
-//
-// Same background-configurability pattern as the company login's
-// LoginForm.tsx: the page.tsx wrapper fetches site_settings server-side
-// and passes the values down as props, so this component itself stays
-// purely about the interactive form.
-//
-// Note the default background color here intentionally matches the
-// ORIGINAL hardcoded value (#1C1815, a near-black) rather than the
-// company login's warm cream default -- these are two different login
-// screens with two different default looks, and a platform admin
-// changing the shared site_settings color would affect both. If you
-// want them to look different by default going forward, that's exactly
-// why this stayed a per-page prop rather than a single global override
-// with no per-page fallback.
+// PlatformLoginForm — themed by the LIVE landing variant's accent color,
+// same as the company login, so both doors match the public site. The
+// admin page keeps its "dark room" character: the background is a deep
+// shade MIXED from the accent (accent 45% into near-black), so a green
+// theme gives a deep green door, a pink theme a deep plum, etc.
 // ----------------------------------------------------------------------------
 export default function PlatformLoginForm({
-  backgroundColor,
+  accentColor,
   backgroundImage,
 }: {
-  backgroundColor: string;
+  accentColor: string;
   backgroundImage: string | null;
 }) {
   const router = useRouter();
@@ -60,18 +50,20 @@ export default function PlatformLoginForm({
     }
   }
 
+  const themedDark = `color-mix(in srgb, ${accentColor} 45%, #14110E)`;
+
   return (
     <div
       style={{
         ...styles.page,
         background: backgroundImage
-          ? `url(${backgroundImage}) center/cover no-repeat, ${backgroundColor}`
-          : backgroundColor,
+          ? `url(${backgroundImage}) center/cover no-repeat, ${themedDark}`
+          : `radial-gradient(circle at 30% 0%, color-mix(in srgb, ${accentColor} 60%, #14110E) 0%, ${themedDark} 60%)`,
       }}
     >
       <div style={styles.card}>
         <div style={styles.brandRow}>
-          <div style={styles.mark}>P</div>
+          <div style={{ ...styles.mark, background: accentColor }}>P</div>
           <div>
             <div style={styles.brandName}>Platform Admin</div>
             <div style={styles.brandSub}>Manage every company on the platform</div>
@@ -103,7 +95,11 @@ export default function PlatformLoginForm({
 
           {error && <div style={styles.error}>{error}</div>}
 
-          <button type="submit" disabled={loading} style={styles.button}>
+          <button
+            type="submit"
+            disabled={loading}
+            style={{ ...styles.button, background: accentColor }}
+          >
             {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
@@ -133,7 +129,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: 38,
     height: 38,
     borderRadius: 8,
-    background: "#1C1815",
     color: "white",
     fontWeight: 700,
     fontSize: 19,
@@ -171,7 +166,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   button: {
     marginTop: 4,
-    background: "#1C1815",
     color: "white",
     border: "none",
     borderRadius: 6,

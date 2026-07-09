@@ -2,21 +2,28 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import PlatformLoginForm from "./PlatformLoginForm";
 
 // ----------------------------------------------------------------------------
-// Server component wrapper -- fetches the platform-admin-specific
-// background settings (separate from the company login's settings, see
-// migration 0014) and passes them down to the interactive form.
+// Server component wrapper — same theme-matching pattern as the company
+// login: the LIVE landing variant's accent color drives this page's
+// look, so both login doors stay uniform with the public site.
 // ----------------------------------------------------------------------------
 export default async function PlatformAdminLoginPage() {
-  const { data } = await supabaseAdmin
-    .from("site_settings")
-    .select("platform_login_background_color, platform_login_background_image")
-    .eq("id", 1)
-    .maybeSingle();
+  const [{ data: settings }, { data: liveVariant }] = await Promise.all([
+    supabaseAdmin
+      .from("site_settings")
+      .select("platform_login_background_image")
+      .eq("id", 1)
+      .maybeSingle(),
+    supabaseAdmin
+      .from("landing_page_variants")
+      .select("accent_color")
+      .eq("is_live", true)
+      .maybeSingle(),
+  ]);
 
   return (
     <PlatformLoginForm
-      backgroundColor={data?.platform_login_background_color ?? "#1C1815"}
-      backgroundImage={data?.platform_login_background_image ?? null}
+      accentColor={liveVariant?.accent_color ?? "#B5562F"}
+      backgroundImage={settings?.platform_login_background_image ?? null}
     />
   );
 }

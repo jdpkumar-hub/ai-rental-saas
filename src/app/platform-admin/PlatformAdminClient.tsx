@@ -1244,6 +1244,8 @@ function LandingPagesTab() {
         </button>
       </div>
 
+      <LandingContentCard />
+
       {showAddForm && (
         <AddVariantForm
           onClose={() => setShowAddForm(false)}
@@ -2057,6 +2059,111 @@ function AddAdminCard({ onAdded }: { onAdded: () => void }) {
 // ============================================================================
 // Shared small components
 // ============================================================================
+// ----------------------------------------------------------------------------
+// LandingContentCard
+//
+// Edits the dynamic text substituted into the live landing variant's
+// tokens ({{HEADLINE}}, {{SUBHEADLINE}}, {{CTA_TEXT}}, {{PHONE}},
+// {{EMAIL}}) at serve time. Saving here updates the public site
+// immediately — no re-upload, no deploy. Variants without tokens simply
+// ignore these values.
+// ----------------------------------------------------------------------------
+function LandingContentCard() {
+  const [content, setContent] = useState({
+    headline: "",
+    subheadline: "",
+    cta_text: "",
+    phone: "",
+    email: "",
+  });
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/platform-admin/landing-content")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.content) setContent(data.content);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  function set(field: string, value: string) {
+    setContent((c) => ({ ...c, [field]: value }));
+  }
+
+  async function save() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/platform-admin/landing-content", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(content),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error || "Failed to save.");
+      } else {
+        setMsg("Saved — live on the public site now.");
+      }
+    } catch {
+      setMsg("Could not reach the server.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <div style={{ ...styles.card, marginBottom: 24 }}>
+      <div style={styles.cardTitle}>Landing content (applies to token-based variants)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <FormField
+          label="Headline {{HEADLINE}}"
+          value={content.headline}
+          onChange={(v) => set("headline", v)}
+        />
+        <FormField
+          label="CTA button text {{CTA_TEXT}}"
+          value={content.cta_text}
+          onChange={(v) => set("cta_text", v)}
+        />
+        <FormField
+          label="Contact phone {{PHONE}}"
+          value={content.phone}
+          onChange={(v) => set("phone", v)}
+        />
+        <FormField
+          label="Contact email {{EMAIL}}"
+          value={content.email}
+          onChange={(v) => set("email", v)}
+        />
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <label style={styles.detailLabel}>{"Subheadline {{SUBHEADLINE}}"}</label>
+        <textarea
+          value={content.subheadline}
+          onChange={(e) => set("subheadline", e.target.value)}
+          rows={3}
+          style={{ ...styles.input, width: "100%", resize: "vertical" }}
+        />
+      </div>
+      <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+        <button onClick={save} disabled={saving} style={styles.primaryButton}>
+          {saving ? "Saving…" : "Save landing content"}
+        </button>
+        {msg && (
+          <span style={{ fontSize: 13, color: "var(--color-ink-muted)" }}>{msg}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------------------
 // CompanyUsageLine
 //

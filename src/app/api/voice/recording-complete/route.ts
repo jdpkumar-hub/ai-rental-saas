@@ -2,28 +2,28 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { billOverageCall, countCallsThisMonth } from "@/lib/callUsage";
 import { sendEmail } from "@/lib/email";
+import { summarizeCall, ChatMessage } from "@/lib/openai";
 
 // ----------------------------------------------------------------------------
 // POST /api/voice/recording-complete
 //
 // Twilio POSTs here once the whole-call recording finishes processing —
-// which conveniently means THE CALL HAS ENDED. We use that for two jobs:
+// which conveniently means THE CALL HAS ENDED. End-of-call jobs, in order:
 //
-//   1. (original) Save full_call_recording_url for the dashboard's
-//      "Play full call" button.
-//   2. (new) End-of-call billing hooks:
-//      - If this call was flagged is_overage at call start, create the
-//        per-call overage InvoiceItem on the company's Stripe customer.
-//        Stripe attaches it to their next subscription invoice
-//        automatically. overage_invoice_item_id makes this idempotent —
-//        a Twilio callback retry can never double-bill a call.
-//      - Usage alert to the platform owner (GMAIL_USER) when a company
-//        crosses 80% or 100% of its monthly cap. (Tenant-facing alert
-//        emails can be added once we wire up a tenant contact address.)
+//   1. Save full_call_recording_url ("Play full call" button).
+//   2. FINALIZE stuck calls: a caller who hangs up mid-conversation
+//      leaves status='in_progress' forever (nothing else fires after a
+//      hangup). Close it out here: status -> completed, ended_at stamped,
+//      duration backfilled from created_at if missing.
+//   3. Overage billing: if the call was flagged is_overage at call start,
+//      create the per-call InvoiceItem on the Stripe customer (rides
+//      their next invoice). Idempotent via overage_invoice_item_id.
+//   4. AI summary + sentiment for the Call History table (one cheap GPT
+//      pass over the transcript; only if not already generated).
+//   5. Usage alert to the platform owner at 80% / 100% of monthly cap.
 //
-// Doing billing here (rather than in /incoming or /turn) means zero
-// added latency for the caller, and it fires whether the call ended by
-// lead completion, hangup, or silence.
+// Everything is wrapped so a failure in any job never bounces Twilio's
+// callback and never blocks the other jobs.
 // ----------------------------------------------------------------------------
 export async function POST(request: NextRequest) {
   const url = new URL(request.url);
@@ -64,16 +64,34 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 2. End-of-call billing hooks. Run regardless of recording status —
-  //    a failed recording shouldn't mean a free overage call.
+  // 2-5. End-of-call jobs. Run regardless of recording status.
   try {
     const { data: call } = await supabaseAdmin
       .from("calls")
-      .select("id, company_id, is_overage, overage_invoice_item_id")
+      .select(
+        "id, company_id, is_overage, overage_invoice_item_id, conversation, status, summary, created_at, duration_seconds"
+      )
       .eq("call_sid", callSid)
       .maybeSingle();
 
     if (call) {
+      // 2. Finalize a stuck in_progress call (caller hung up mid-flow).
+      if (call.status === "in_progress") {
+        const finalize: Record<string, unknown> = {
+          status: "completed",
+          ended_at: new Date().toISOString(),
+        };
+        if (!call.duration_seconds && call.created_at) {
+          finalize.duration_seconds = Math.max(
+            0,
+            Math.floor(
+              (Date.now() - new Date(call.created_at).getTime()) / 1000
+            )
+          );
+        }
+        await supabaseAdmin.from("calls").update(finalize).eq("id", call.id);
+      }
+
       const { data: company } = await supabaseAdmin
         .from("companies")
         .select(
@@ -82,7 +100,7 @@ export async function POST(request: NextRequest) {
         .eq("id", call.company_id)
         .maybeSingle();
 
-      // 2a. Bill the overage (idempotent via overage_invoice_item_id).
+      // 3. Bill the overage (idempotent via overage_invoice_item_id).
       if (call.is_overage && !call.overage_invoice_item_id && company) {
         const itemId = await billOverageCall({
           stripeCustomerId: company.stripe_customer_id ?? null,
@@ -99,8 +117,38 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // 2b. Usage alerts to the platform owner at 80% and 100% of cap.
-      //     Sent only on the exact crossing call, so no email flood.
+      // 4. AI summary + sentiment (once per call; skip if already done
+      //    or if there's no transcript beyond the greeting).
+      if (!call.summary) {
+        try {
+          const conversation = (call.conversation ?? []) as ChatMessage[];
+          const hasCallerSpeech = conversation.some((m) => m.role === "user");
+
+          if (hasCallerSpeech) {
+            const result = await summarizeCall(conversation);
+            await supabaseAdmin
+              .from("calls")
+              .update({ summary: result.summary, sentiment: result.sentiment })
+              .eq("id", call.id);
+          } else {
+            await supabaseAdmin
+              .from("calls")
+              .update({
+                summary: "Caller hung up before saying anything.",
+                sentiment: "neutral",
+              })
+              .eq("id", call.id);
+          }
+        } catch (summaryErr) {
+          console.error(
+            "[voice/recording-complete] Summary generation failed:",
+            summaryErr
+          );
+        }
+      }
+
+      // 5. Usage alerts to the platform owner at 80% and 100% of cap.
+      //    Sent only on the exact crossing call, so no email flood.
       const ownerEmail = process.env.GMAIL_USER;
       if (company?.call_limit && ownerEmail) {
         const used = await countCallsThisMonth(supabaseAdmin, company.id);
@@ -117,8 +165,8 @@ export async function POST(request: NextRequest) {
       }
     }
   } catch (err) {
-    // Billing/alert failures must never bounce Twilio's callback.
-    console.error("[voice/recording-complete] Billing hook error:", err);
+    // End-of-call job failures must never bounce Twilio's callback.
+    console.error("[voice/recording-complete] End-of-call hook error:", err);
   }
 
   return new NextResponse(null, { status: 200 });

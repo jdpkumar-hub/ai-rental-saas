@@ -27,7 +27,7 @@ import { recomputeAndSaveLeaseProbability } from "@/lib/leaseScore";
 // Requires the @vercel/functions package (npm install @vercel/functions).
 // ----------------------------------------------------------------------------
 
-const ACKS = ["Mm-hm.", "Okay.", "Got it.", "Alright.", "Sure."];
+const ACKS = ["Okay.", "Got it.", "Alright.", "Sure.", "One second."];
 
 export async function POST(request: NextRequest) {
   const url = new URL(request.url);

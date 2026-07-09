@@ -605,6 +605,7 @@ function CompanyDetail({
         </div>
         <div style={styles.detailField}>
           <label style={styles.detailLabel}>Monthly call limit</label>
+          <CompanyUsageLine companyId={company.id} callLimit={company.call_limit} />
           <div style={styles.inlineRow}>
             <input
               type="number"
@@ -2056,6 +2057,60 @@ function AddAdminCard({ onAdded }: { onAdded: () => void }) {
 // ============================================================================
 // Shared small components
 // ============================================================================
+// ----------------------------------------------------------------------------
+// CompanyUsageLine
+//
+// Small live readout above the call-limit input in the company editor:
+// "Calls this month: 37 / 100 · 0 overage · 63 remaining". Fetched from
+// /api/platform-admin/companies/[id]/usage each time a company is opened
+// (and re-fetched when the stored limit changes, so editing the cap
+// updates the remaining count immediately).
+// ----------------------------------------------------------------------------
+function CompanyUsageLine({
+  companyId,
+  callLimit,
+}: {
+  companyId: string;
+  callLimit: number | null;
+}) {
+  const [usage, setUsage] = useState<{
+    calls_this_month: number;
+    overage_calls: number;
+  } | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setUsage(null);
+    setFailed(false);
+    fetch(`/api/platform-admin/companies/${companyId}/usage`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data) => {
+        if (!cancelled) setUsage(data);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, callLimit]);
+
+  if (failed) return null;
+
+  const text = !usage
+    ? "Loading usage…"
+    : callLimit === null || callLimit === undefined
+      ? `Calls this month: ${usage.calls_this_month} (unlimited plan)`
+      : `Calls this month: ${usage.calls_this_month} / ${callLimit} · ${usage.overage_calls} overage · ${Math.max(callLimit - usage.calls_this_month, 0)} remaining`;
+
+  return (
+    <div style={{ fontSize: 13, color: "var(--color-ink-muted)", margin: "2px 0 6px" }}>
+      {text}
+    </div>
+  );
+}
+
 function FormField({
   label,
   value,

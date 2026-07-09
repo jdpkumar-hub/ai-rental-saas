@@ -11,14 +11,23 @@ type Settings = {
   email_enabled: boolean;
 } | null;
 
+type CallUsage = {
+  used: number;
+  overage: number;
+  limit: number | null; // null = unlimited
+  overagePriceCents: number;
+};
+
 export default function DashboardClient({
   session,
   settings,
   userCount,
+  callUsage,
 }: {
   session: SessionPayload;
   settings: Settings;
   userCount: number;
+  callUsage: CallUsage;
 }) {
   const router = useRouter();
 
@@ -81,6 +90,8 @@ export default function DashboardClient({
         </p>
 
         <div style={styles.grid}>
+          <CallUsageCard usage={callUsage} />
+
           <Card title="Company settings" mono>
             {settings ? (
               <>
@@ -120,6 +131,66 @@ export default function DashboardClient({
         </div>
       </main>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// CallUsageCard
+//
+// "63 of 100 calls used this month" with a progress bar. Transparency for
+// the tenant: they can always see where they stand against their plan's
+// included calls, and what an over-limit call costs, BEFORE any overage
+// appears on an invoice. Unlimited plans just show the raw count.
+// ----------------------------------------------------------------------------
+function CallUsageCard({ usage }: { usage: CallUsage }) {
+  const { used, overage, limit, overagePriceCents } = usage;
+  const overagePrice = `$${(overagePriceCents / 100).toFixed(2)}`;
+
+  if (limit === null) {
+    return (
+      <Card title="Calls this month">
+        <div style={styles.bigNumber}>{used}</div>
+        <div style={styles.bigNumberLabel}>
+          call{used === 1 ? "" : "s"} answered this month · unlimited plan
+        </div>
+      </Card>
+    );
+  }
+
+  const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 100;
+  const atOrOver = used >= limit;
+  const remaining = Math.max(limit - used, 0);
+  const barColor = atOrOver
+    ? "#c0392b"
+    : pct >= 80
+      ? "#d68910"
+      : "var(--color-clay)";
+
+  return (
+    <Card title="Calls this month">
+      <div style={styles.bigNumber}>
+        {used}
+        <span style={styles.bigNumberOf}> / {limit}</span>
+      </div>
+      <div style={styles.bigNumberLabel}>included calls used this month</div>
+
+      <div style={styles.usageBarTrack}>
+        <div
+          style={{
+            ...styles.usageBarFill,
+            width: `${pct}%`,
+            background: barColor,
+          }}
+        />
+      </div>
+
+      <div style={styles.usageNote}>
+        {atOrOver
+          ? `Limit reached — calls are still answered, and each additional call this month is billed at ${overagePrice} on your next invoice.` +
+            (overage > 0 ? ` Over-limit calls so far: ${overage}.` : "")
+          : `${remaining} call${remaining === 1 ? "" : "s"} remaining. Calls beyond your plan's ${limit} are still answered and billed at ${overagePrice} each.`}
+      </div>
+    </Card>
   );
 }
 
@@ -286,10 +357,33 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--color-clay)",
     lineHeight: 1,
   },
+  bigNumberOf: {
+    fontSize: 20,
+    fontWeight: 600,
+    color: "var(--color-ink-muted)",
+  },
   bigNumberLabel: {
     fontSize: 13,
     color: "var(--color-ink-muted)",
     marginTop: 4,
+  },
+  usageBarTrack: {
+    height: 8,
+    borderRadius: 4,
+    background: "var(--color-border)",
+    marginTop: 14,
+    overflow: "hidden",
+  },
+  usageBarFill: {
+    height: "100%",
+    borderRadius: 4,
+    transition: "width 0.3s ease",
+  },
+  usageNote: {
+    fontSize: 12.5,
+    color: "var(--color-ink-muted)",
+    marginTop: 10,
+    lineHeight: 1.5,
   },
   upcomingList: {
     margin: 0,

@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PlatformAdminSessionPayload } from "@/lib/platformAdminSession";
+import {
+  renderLandingHtml,
+  DEFAULT_LANDING_CONTENT,
+  type LandingContent,
+} from "@/lib/landingContent";
 
 type TwilioNumber = {
   id: string;
@@ -1169,9 +1174,20 @@ function LandingPagesTab() {
     null
   );
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  // Saved landing content, so Preview renders variants EXACTLY the way
+  // the public site will (tokens replaced + accent injected) instead of
+  // showing raw {{TOKENS}}.
+  const [landingPreviewContent, setLandingPreviewContent] =
+    useState<LandingContent>(DEFAULT_LANDING_CONTENT);
 
   useEffect(() => {
     fetchVariants();
+    fetch("/api/platform-admin/landing-content")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.content) setLandingPreviewContent(data.content);
+      })
+      .catch(() => {});
   }, []);
 
   async function fetchVariants() {
@@ -1269,7 +1285,11 @@ function LandingPagesTab() {
               </button>
             </div>
             <iframe
-              srcDoc={previewVariant.html_content}
+              srcDoc={renderLandingHtml(
+                previewVariant.html_content,
+                landingPreviewContent,
+                previewVariant.accent_color
+              )}
               style={styles.previewIframe}
               title={`Preview of ${previewVariant.name}`}
             />

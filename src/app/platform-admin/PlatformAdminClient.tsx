@@ -91,7 +91,7 @@ type CompanyUser = {
   created_at: string;
 };
 
-type Tab = "companies" | "inquiries" | "landing-pages" | "pricing" | "account";
+type Tab = "overview" | "companies" | "inquiries" | "landing-pages" | "pricing" | "account";
 
 export default function PlatformAdminClient({
   session,
@@ -99,7 +99,7 @@ export default function PlatformAdminClient({
   session: PlatformAdminSessionPayload;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("companies");
+  const [tab, setTab] = useState<Tab>("overview");
 
   async function handleLogout() {
     await fetch("/api/platform-admin/auth/logout", { method: "POST" });
@@ -126,6 +126,9 @@ export default function PlatformAdminClient({
 
       <main style={styles.main}>
         <div style={styles.tabRow}>
+          <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>
+            Overview
+          </TabButton>
           <TabButton active={tab === "companies"} onClick={() => setTab("companies")}>
             Companies
           </TabButton>
@@ -146,6 +149,7 @@ export default function PlatformAdminClient({
           </TabButton>
         </div>
 
+        {tab === "overview" && <OverviewTab />}
         {tab === "companies" && <CompaniesTab />}
         {tab === "inquiries" && <InquiriesTab />}
         {tab === "landing-pages" && <LandingPagesTab />}
@@ -2079,6 +2083,154 @@ function AddAdminCard({ onAdded }: { onAdded: () => void }) {
 // ============================================================================
 // Shared small components
 // ============================================================================
+
+// ----------------------------------------------------------------------------
+// OverviewTab — centralized cross-tenant activity monitor. One row per
+// company: calls & leads today / this 7 days / this month, hot leads,
+// monthly cap usage, and when their last call happened. Powered by
+// GET /api/platform-admin/overview. Auto-refreshes every 60s.
+// ----------------------------------------------------------------------------
+type OverviewRow = {
+  company_id: string;
+  company_name: string;
+  company_code: string;
+  status: string;
+  subscription_plan: string | null;
+  call_limit: number | null;
+  calls_today: number;
+  calls_7d: number;
+  calls_month: number;
+  leads_month: number;
+  hot_leads: number;
+  last_call_at: string | null;
+};
+
+function OverviewTab() {
+  const [rows, setRows] = useState<OverviewRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    try {
+      const res = await fetch("/api/platform-admin/overview");
+      const data = await res.json();
+      if (!res.ok) setError(data.error || "Failed to load overview");
+      else {
+        setRows(data.companies ?? []);
+        setError(null);
+      }
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  function fmtLast(iso: string | null) {
+    if (!iso) return "—";
+    const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + "m ago";
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + "h ago";
+    return Math.floor(hrs / 24) + "d ago";
+  }
+
+  const totals = rows.reduce(
+    (a, r) => ({
+      today: a.today + r.calls_today,
+      month: a.month + r.calls_month,
+      leads: a.leads + r.leads_month,
+    }),
+    { today: 0, month: 0, leads: 0 }
+  );
+
+  return (
+    <div>
+      <div style={styles.sectionTitleRow}>
+        <div>
+          <h2 style={styles.h2}>Overview</h2>
+          <p style={styles.sectionSubtitle}>
+            All tenants at a glance — {totals.today} call{totals.today === 1 ? "" : "s"} today,{" "}
+            {totals.month} this month, {totals.leads} lead{totals.leads === 1 ? "" : "s"} captured.
+            Refreshes every minute.
+          </p>
+        </div>
+      </div>
+
+      {loading && <p style={styles.sectionSubtitle}>Loading…</p>}
+      {error && <p style={{ ...styles.sectionSubtitle, color: "var(--color-danger, #A8392B)" }}>{error}</p>}
+
+      {!loading && !error && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+            <thead>
+              <tr>
+                {["Company", "Status", "Calls today", "7 days", "Month (cap)", "Leads /mo", "Hot leads", "Last call"].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      style={{
+                        textAlign: "left",
+                        padding: "10px 12px",
+                        fontSize: 11.5,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.03em",
+                        color: "var(--color-ink-muted)",
+                        borderBottom: "2px solid var(--color-border)",
+                      }}
+                    >
+                      {h}
+                    </th>
+                  )
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const overCap = r.call_limit !== null && r.calls_month >= r.call_limit;
+                return (
+                  <tr key={r.company_id} style={{ borderBottom: "1px solid var(--color-border)" }}>
+                    <td style={{ padding: "11px 12px" }}>
+                      <div style={{ fontWeight: 600 }}>{r.company_name}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--color-ink-muted)", fontFamily: "var(--font-mono)" }}>
+                        {r.company_code} · {r.subscription_plan ?? "—"}
+                      </div>
+                    </td>
+                    <td style={{ padding: "11px 12px" }}>{r.status}</td>
+                    <td style={{ padding: "11px 12px", fontWeight: r.calls_today > 0 ? 700 : 400 }}>{r.calls_today}</td>
+                    <td style={{ padding: "11px 12px" }}>{r.calls_7d}</td>
+                    <td style={{ padding: "11px 12px", color: overCap ? "#A8392B" : undefined, fontWeight: overCap ? 700 : 400 }}>
+                      {r.calls_month}
+                      {r.call_limit !== null ? ` / ${r.call_limit}` : " / ∞"}
+                    </td>
+                    <td style={{ padding: "11px 12px" }}>{r.leads_month}</td>
+                    <td style={{ padding: "11px 12px", fontWeight: r.hot_leads > 0 ? 700 : 400 }}>{r.hot_leads}</td>
+                    <td style={{ padding: "11px 12px", fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{fmtLast(r.last_call_at)}</td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={8} style={{ padding: 20, color: "var(--color-ink-muted)" }}>
+                    No companies yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------------------
 // LandingContentCard
 //

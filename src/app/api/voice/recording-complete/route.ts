@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
       const { data: company } = await supabaseAdmin
         .from("companies")
         .select(
-          "id, company_name, stripe_customer_id, call_limit, overage_price_cents"
+          "id, company_name, email, stripe_customer_id, call_limit, overage_price_cents"
         )
         .eq("id", call.company_id)
         .maybeSingle();
@@ -145,6 +145,64 @@ export async function POST(request: NextRequest) {
             summaryErr
           );
         }
+      }
+
+      // 4b. NEW-LEAD ALERT to the tenant. If this call produced a lead
+      //     and the company has email notifications enabled
+      //     (company_settings.email_enabled), email them right away —
+      //     "you got a lead" the moment the call ends. lead_alert_sent_at
+      //     makes it retry-safe.
+      try {
+        const { data: callWithLead } = await supabaseAdmin
+          .from("calls")
+          .select("id, lead_id, lead_alert_sent_at, summary")
+          .eq("id", call.id)
+          .maybeSingle();
+
+        if (callWithLead?.lead_id && !callWithLead.lead_alert_sent_at && company?.email) {
+          const { data: settings } = await supabaseAdmin
+            .from("company_settings")
+            .select("email_enabled")
+            .eq("company_id", company.id)
+            .single();
+
+          if (settings?.email_enabled) {
+            const { data: lead } = await supabaseAdmin
+              .from("leads")
+              .select("name, phone, budget, move_in_date, apartment_size")
+              .eq("id", callWithLead.lead_id)
+              .maybeSingle();
+
+            const appUrl =
+              process.env.NEXT_PUBLIC_APP_URL ?? "https://ai-rental-saas.vercel.app";
+            const row = (label: string, value: string | null) =>
+              value
+                ? `<tr><td style="padding:4px 12px 4px 0;color:#6B6358;">${label}</td><td style="padding:4px 0;"><strong>${value}</strong></td></tr>`
+                : "";
+
+            await sendEmail({
+              to: company.email,
+              subject: `New lead from your AI assistant${lead?.name ? `: ${lead.name}` : ""}`,
+              html: `<p>Your assistant just finished a call and captured a new lead:</p>
+<table style="font-size:14px;">
+${row("Name", lead?.name ?? null)}
+${row("Phone", lead?.phone ?? null)}
+${row("Budget", lead?.budget ?? null)}
+${row("Move-in", lead?.move_in_date ?? null)}
+${row("Size", lead?.apartment_size ?? null)}
+</table>
+${callWithLead.summary ? `<p style="color:#6B6358;">"${callWithLead.summary}"</p>` : ""}
+<p><a href="${appUrl}/dashboard/leads">Open your leads dashboard</a> for the full transcript and recording.</p>`,
+            });
+
+            await supabaseAdmin
+              .from("calls")
+              .update({ lead_alert_sent_at: new Date().toISOString() })
+              .eq("id", call.id);
+          }
+        }
+      } catch (alertErr) {
+        console.error("[voice/recording-complete] Lead alert failed:", alertErr);
       }
 
       // 5. Usage alerts to the platform owner at 80% and 100% of cap.

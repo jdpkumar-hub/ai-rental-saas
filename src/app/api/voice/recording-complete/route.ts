@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { billOverageCall, countCallsThisMonth } from "@/lib/callUsage";
 import { sendEmail } from "@/lib/email";
+import { sendSms } from "@/lib/sms";
 import { summarizeCall, ChatMessage } from "@/lib/openai";
 
 // ----------------------------------------------------------------------------
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
       const { data: company } = await supabaseAdmin
         .from("companies")
         .select(
-          "id, company_name, email, stripe_customer_id, call_limit, overage_price_cents"
+          "id, company_name, email, phone, stripe_customer_id, call_limit, overage_price_cents"
         )
         .eq("id", call.company_id)
         .maybeSingle();
@@ -147,11 +148,9 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // 4b. NEW-LEAD ALERT to the tenant. If this call produced a lead
-      //     and the company has email notifications enabled
-      //     (company_settings.email_enabled), email them right away —
-      //     "you got a lead" the moment the call ends. lead_alert_sent_at
-      //     makes it retry-safe.
+      // 4b. NEW-LEAD ALERTS to the tenant (email and/or SMS, per their
+      //     company_settings toggles). Sent the moment the call ends;
+      //     lead_alert_sent_at makes the whole block retry-safe.
       try {
         const { data: callWithLead } = await supabaseAdmin
           .from("calls")
@@ -159,14 +158,14 @@ export async function POST(request: NextRequest) {
           .eq("id", call.id)
           .maybeSingle();
 
-        if (callWithLead?.lead_id && !callWithLead.lead_alert_sent_at && company?.email) {
+        if (callWithLead?.lead_id && !callWithLead.lead_alert_sent_at && company) {
           const { data: settings } = await supabaseAdmin
             .from("company_settings")
-            .select("email_enabled")
+            .select("email_enabled, sms_enabled")
             .eq("company_id", company.id)
             .single();
 
-          if (settings?.email_enabled) {
+          if (settings?.email_enabled || settings?.sms_enabled) {
             const { data: lead } = await supabaseAdmin
               .from("leads")
               .select("name, phone, budget, move_in_date, apartment_size")
@@ -175,15 +174,19 @@ export async function POST(request: NextRequest) {
 
             const appUrl =
               process.env.NEXT_PUBLIC_APP_URL ?? "https://ai-rental-saas.vercel.app";
-            const row = (label: string, value: string | null) =>
-              value
-                ? `<tr><td style="padding:4px 12px 4px 0;color:#6B6358;">${label}</td><td style="padding:4px 0;"><strong>${value}</strong></td></tr>`
-                : "";
+            let anySent = false;
 
-            await sendEmail({
-              to: company.email,
-              subject: `New lead from your AI assistant${lead?.name ? `: ${lead.name}` : ""}`,
-              html: `<p>Your assistant just finished a call and captured a new lead:</p>
+            // --- Email channel ---
+            if (settings?.email_enabled && company.email) {
+              const row = (label: string, value: string | null) =>
+                value
+                  ? `<tr><td style="padding:4px 12px 4px 0;color:#6B6358;">${label}</td><td style="padding:4px 0;"><strong>${value}</strong></td></tr>`
+                  : "";
+
+              await sendEmail({
+                to: company.email,
+                subject: `New lead from your AI assistant${lead?.name ? `: ${lead.name}` : ""}`,
+                html: `<p>Your assistant just finished a call and captured a new lead:</p>
 <table style="font-size:14px;">
 ${row("Name", lead?.name ?? null)}
 ${row("Phone", lead?.phone ?? null)}
@@ -193,12 +196,50 @@ ${row("Size", lead?.apartment_size ?? null)}
 </table>
 ${callWithLead.summary ? `<p style="color:#6B6358;">"${callWithLead.summary}"</p>` : ""}
 <p><a href="${appUrl}/dashboard/leads">Open your leads dashboard</a> for the full transcript and recording.</p>`,
-            });
+              });
+              anySent = true;
+            }
 
-            await supabaseAdmin
-              .from("calls")
-              .update({ lead_alert_sent_at: new Date().toISOString() })
-              .eq("id", call.id);
+            // --- SMS channel: sent FROM the company's own assistant
+            //     number TO their contact phone (companies.phone) ---
+            if (settings?.sms_enabled && company.phone) {
+              const { data: fromNumber } = await supabaseAdmin
+                .from("twilio_numbers")
+                .select("phone_number")
+                .eq("company_id", company.id)
+                .eq("active", true)
+                .limit(1)
+                .maybeSingle();
+
+              if (fromNumber?.phone_number) {
+                const bits = [
+                  lead?.name,
+                  lead?.apartment_size,
+                  lead?.move_in_date,
+                  lead?.budget,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                const smsResult = await sendSms({
+                  to: company.phone,
+                  from: fromNumber.phone_number,
+                  body: `New lead via your AI assistant${bits ? `: ${bits}` : ""}${lead?.phone ? `. Callback: ${lead.phone}` : ""}. Details: ${appUrl}/dashboard/leads`,
+                });
+                if (smsResult) anySent = true;
+              } else {
+                console.error(
+                  "[voice/recording-complete] sms_enabled but no active Twilio number for company",
+                  company.id
+                );
+              }
+            }
+
+            if (anySent) {
+              await supabaseAdmin
+                .from("calls")
+                .update({ lead_alert_sent_at: new Date().toISOString() })
+                .eq("id", call.id);
+            }
           }
         }
       } catch (alertErr) {

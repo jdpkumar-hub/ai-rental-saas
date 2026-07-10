@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { requirePlatformAdmin } from "@/lib/requirePlatformAdmin";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { sendEmail } from "@/lib/email";
 
 // ----------------------------------------------------------------------------
 // GET /api/platform-admin/companies
@@ -20,7 +21,7 @@ export async function GET() {
   const { data: companies, error } = await supabaseAdmin
     .from("companies")
     .select(
-      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at, created_at,setup_fee_cents, setup_fee_paid_at"
+      "id, company_name, company_code, email, phone, subscription_plan, status, logo_url, brand_color, trial_started_at, trial_ends_at, created_at, setup_fee_cents, setup_fee_paid_at, call_limit, overage_price_cents"
     )
     .order("created_at", { ascending: false });
 
@@ -82,6 +83,7 @@ export async function POST(request: NextRequest) {
     admin_email?: string;
     admin_password?: string;
     trial_start_date?: string;
+    send_welcome_email?: boolean;
   };
 
   try {
@@ -212,5 +214,73 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ company: newCompany });
+  // ------------------------------------------------------------------
+  // WELCOME EMAIL (onboarding step 4: inquiry -> agreement -> provision
+  // -> WELCOME). Sent here — and only here — because this is the one
+  // place the admin's plaintext password exists (it's hashed above and
+  // never stored). Email failure never fails the creation; the response
+  // reports whether it went out so the UI/you can follow up manually.
+  // ------------------------------------------------------------------
+  let welcomeEmailSent = false;
+  if (body.send_welcome_email) {
+    try {
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL ?? "https://ai-rental-saas.vercel.app";
+      const trialEndPretty = trialEndsAt.toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+      const firstName = admin_name.trim().split(" ")[0] || "there";
+
+      await sendEmail({
+        to: admin_email.trim().toLowerCase(),
+        subject: `Welcome to AI Rental Office Assistant — your ${company_name.trim()} dashboard is ready`,
+        html: `
+          <p>Hi ${firstName},</p>
+          <p>Your AI assistant for <strong>${company_name.trim()}</strong> is set
+          up and answering calls. Here's everything you need to log in:</p>
+          <table style="font-size:14px;border-collapse:collapse;">
+            <tr><td style="padding:4px 14px 4px 0;color:#6B6358;">Dashboard</td><td style="padding:4px 0;"><a href="${appUrl}/login">${appUrl}/login</a></td></tr>
+            <tr><td style="padding:4px 14px 4px 0;color:#6B6358;">Company code</td><td style="padding:4px 0;"><strong>${normalizedCode}</strong></td></tr>
+            <tr><td style="padding:4px 14px 4px 0;color:#6B6358;">Email</td><td style="padding:4px 0;"><strong>${admin_email.trim().toLowerCase()}</strong></td></tr>
+            <tr><td style="padding:4px 14px 4px 0;color:#6B6358;">Password</td><td style="padding:4px 0;"><strong>${admin_password}</strong></td></tr>
+            ${trimmedNumber ? `<tr><td style="padding:4px 14px 4px 0;color:#6B6358;">Your assistant's number</td><td style="padding:4px 0;"><strong>${trimmedNumber}</strong></td></tr>` : ""}
+          </table>
+          <p>We recommend changing your password after your first login
+          (Settings → Users).</p>
+          <p>Your <strong>14-day free trial</strong> runs through
+          <strong>${trialEndPretty}</strong>. During the trial you'll see every
+          call, transcript, and captured lead in your dashboard in real time.
+          When the trial ends, you'll pick a plan right in the app — the
+          one-time setup fee is bundled with your first payment.</p>
+          <p>Questions any time — just reply to this email.</p>
+          <p>— AI Rental Office Assistant</p>
+        `,
+      });
+      welcomeEmailSent = true;
+    } catch (emailErr) {
+      console.error("[platform-admin/companies] Welcome email failed:", emailErr);
+    }
+  }
+
+  // Close the loop on the inquiry that started this onboarding, if one
+  // matches either email address. Best-effort — no inquiry is fine.
+  try {
+    await supabaseAdmin
+      .from("inquiries")
+      .update({ status: "onboarded" })
+      .in("email", [
+        company_email.trim().toLowerCase(),
+        admin_email.trim().toLowerCase(),
+      ])
+      .neq("status", "declined");
+  } catch (inqErr) {
+    console.error("[platform-admin/companies] Inquiry status update failed:", inqErr);
+  }
+
+  return NextResponse.json({
+    company: newCompany,
+    welcome_email_sent: welcomeEmailSent,
+  });
 }

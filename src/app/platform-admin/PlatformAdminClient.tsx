@@ -288,6 +288,7 @@ function CreateCompanyForm({
     admin_email: "",
     admin_password: "",
   });
+  const [sendWelcome, setSendWelcome] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -303,7 +304,7 @@ function CreateCompanyForm({
       const res = await fetch("/api/platform-admin/companies", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, send_welcome_email: sendWelcome }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -380,6 +381,24 @@ function CreateCompanyForm({
         />
 
         {error && <div style={styles.formError}>{error}</div>}
+
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13.5,
+            color: "var(--color-ink)",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={sendWelcome}
+            onChange={(e) => setSendWelcome(e.target.checked)}
+          />
+          Email login details to the admin user (dashboard link, company code, password)
+        </label>
 
         <div style={styles.formActions}>
           <button type="submit" disabled={submitting} style={styles.primaryButton}>
@@ -1126,6 +1145,7 @@ function InquiriesTab() {
                 <th style={styles.th}>Email</th>
                 <th style={styles.th}>Phone</th>
                 <th style={styles.th}>Status</th>
+                <th style={styles.th}>Actions</th>
                 <th style={styles.th}>Received</th>
               </tr>
             </thead>
@@ -1146,9 +1166,13 @@ function InquiriesTab() {
                     >
                       <option value="new">New</option>
                       <option value="contacted">Contacted</option>
+                      <option value="agreement_sent">Agreement sent</option>
                       <option value="onboarded">Onboarded</option>
                       <option value="declined">Declined</option>
                     </select>
+                  </td>
+                  <td style={styles.td}>
+                    <SendAgreementButton inquiry={inq} onSent={fetchInquiries} />
                   </td>
                   <td style={{ ...styles.td, ...styles.mono }}>
                     {formatDate(inq.created_at)}
@@ -2228,6 +2252,62 @@ function OverviewTab() {
         </div>
       )}
     </div>
+  );
+}
+
+
+// ----------------------------------------------------------------------------
+// SendAgreementButton — one-click onboarding step: emails the prospect a
+// personalized next-steps + agreement email (see
+// /api/platform-admin/inquiries/[id]/send-agreement) and moves the
+// inquiry's status to agreement_sent. Safe to resend (each click sends a
+// fresh copy).
+// ----------------------------------------------------------------------------
+function SendAgreementButton({
+  inquiry,
+  onSent,
+}: {
+  inquiry: Inquiry;
+  onSent: () => void;
+}) {
+  const [sending, setSending] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function send() {
+    setSending(true);
+    setMsg(null);
+    try {
+      const res = await fetch(
+        `/api/platform-admin/inquiries/${inquiry.id}/send-agreement`,
+        { method: "POST" }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(data.error || "Failed");
+      } else {
+        setMsg("Sent ✓");
+        onSent();
+      }
+    } catch {
+      setMsg("Failed");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      <button onClick={send} disabled={sending} style={styles.secondaryButton}>
+        {sending
+          ? "Sending…"
+          : inquiry.status === "agreement_sent"
+            ? "Resend agreement"
+            : "Send agreement"}
+      </button>
+      {msg && (
+        <span style={{ fontSize: 12, color: "var(--color-ink-muted)" }}>{msg}</span>
+      )}
+    </span>
   );
 }
 
